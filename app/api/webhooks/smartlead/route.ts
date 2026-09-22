@@ -31,6 +31,9 @@ export async function POST(request:Request){
  if(![urlSecret,headerSecret,p.secret_key??""].some(v=>v&&safeEqual(v,secret))&&!(signature&&safeEqual(signature,expected)))return Response.json({error:"Invalid signature"},{status:401});
  const eventType=String(p.event_type??p.type??"EMAIL_REPLY").toUpperCase();
  if(eventType!=="EMAIL_REPLY")return Response.json({ok:true,ignored:true,eventType});
+ const campaignFilter=(process.env.SMARTLEAD_CAMPAIGN_FILTER??"Venluto").trim().toLowerCase();
+ const incomingCampaign=(p.campaign_name??"").trim();
+ if(campaignFilter&&!incomingCampaign.toLowerCase().includes(campaignFilter))return Response.json({ok:true,ignored:true,reason:"campaign_filter",campaign:incomingCampaign});
  const requestId=request.headers.get("x-request-id"),replyId=String(p.reply_message?.message_id??p.message_id??p.reply_id??"");
  const eventId=String(requestId??p.event_id??p.id??(replyId||`${p.campaign_id}:${p.sl_email_lead_id??p.lead_id}:${p.event_timestamp??p.received_at}`));
  const inserted=await sql`INSERT INTO integration_events(provider,external_event_id,event_type,payload_json) VALUES ('smartlead',${eventId},${eventType},${raw}::jsonb) ON CONFLICT(provider,external_event_id) DO NOTHING RETURNING id`;
