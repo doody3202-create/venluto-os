@@ -8,7 +8,7 @@ One internal dashboard for positive replies, prospect ownership, five-minute res
 - **Worker service:** idempotent Close and future Slack synchronization
 - **PostgreSQL:** canonical prospects, replies, meetings, event history, and retry queue
 
-Both services use this repository. The web service starts with `npm run start`; the worker overrides its start command with `npm run worker`.
+Both services use this repository. The web service uses `railway.json`; configure the worker's Railway config file path as `/railway.worker.json` so it starts with `npm run worker` and does not expect an HTTP health endpoint.
 
 ## Safe setup
 
