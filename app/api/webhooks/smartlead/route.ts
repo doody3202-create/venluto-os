@@ -10,15 +10,17 @@ type Payload = {
   to_email?: string; to_name?: string; first_name?: string; last_name?: string;
   company_name?: string; company_domain?: string; reply_text?: string; message?: string;
   preview_text?: string; reply_body?: string; message_body?: string; received_at?: string; event_timestamp?: string;
-  secret_key?: string; reply_category?: string|number; lead_category?: string|number;
-  category?: string|number; category_name?: string; lead_category_name?: string;
+  secret_key?: string; reply_category?: CategoryValue; lead_category?: CategoryValue;
+  category?: CategoryValue; category_name?: string; lead_category_name?: string;
   lead_first_name?: string; lead_last_name?: string;
   reply_message?: { message_id?: string; text?: string; html?: string; time?: string };
   leadCorrespondence?: { targetLeadEmail?: string; replyReceivedFrom?: string; repliedCompanyDomain?: string };
 };
+type CategoryValue=string|number|{name?:string;label?:string;title?:string;category_name?:string;lead_category_name?:string};
 
 const safeEqual=(a:string,b:string)=>{const aa=Buffer.from(a),bb=Buffer.from(b);return aa.length===bb.length&&timingSafeEqual(aa,bb)};
 const plain=(value:string)=>value.replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim();
+const categoryName=(value:CategoryValue|undefined)=>{if(value===undefined||value===null)return "";if(typeof value!=="object")return String(value).trim();return String(value.name??value.label??value.title??value.category_name??value.lead_category_name??"").trim()};
 
 export async function POST(request:Request){
  await ensureDatabase();
@@ -33,7 +35,7 @@ export async function POST(request:Request){
  if(![urlSecret,headerSecret,p.secret_key??""].some(v=>v&&safeEqual(v,secret))&&!(signature&&safeEqual(signature,expected)))return Response.json({error:"Invalid signature"},{status:401});
  const eventType=String(p.event_type??p.type??"EMAIL_REPLY").toUpperCase();
  if(!["EMAIL_REPLY","LEAD_CATEGORY_UPDATED"].includes(eventType)){console.info("Smartlead event ignored",{eventType,reason:"event_type"});return Response.json({ok:true,ignored:true,eventType})}
- const category=String(p.lead_category_name??p.category_name??p.lead_category??p.reply_category??p.category??"").trim();
+ const category=categoryName(p.lead_category_name??p.category_name??p.lead_category??p.reply_category??p.category);
  const allowedCategories=(process.env.SMARTLEAD_POSITIVE_CATEGORIES??"Interested,Meeting Request,Information Request").split(",").map(v=>v.trim().toLowerCase()).filter(Boolean);
  if(!category||!allowedCategories.includes(category.toLowerCase())){console.info("Smartlead event ignored",{eventType,category:category||null,reason:"reply_category"});return Response.json({ok:true,ignored:true,reason:"reply_category",category:category||null})}
  const campaignFilter=(process.env.SMARTLEAD_CAMPAIGN_FILTER??"Venluto").trim().toLowerCase();
