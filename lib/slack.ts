@@ -1,19 +1,6 @@
 import { sql } from "@/lib/db";
-
-export async function notifySlack(idempotencyKey: string, text: string) {
-  const url = process.env.SLACK_WEBHOOK_URL;
-  if (!url) return;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!response.ok) throw new Error(`Slack returned ${response.status}: ${(await response.text()).slice(0, 180)}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Slack error";
-    await sql`INSERT INTO sync_jobs(provider,operation,idempotency_key,payload_json,status,attempts,last_error,next_retry_at)
-      VALUES ('slack','send_notification',${idempotencyKey},${JSON.stringify({ text })}::jsonb,'failed',1,${message},NOW()+INTERVAL '5 minutes')
-      ON CONFLICT(idempotency_key) DO UPDATE SET status='failed',last_error=EXCLUDED.last_error,next_retry_at=EXCLUDED.next_retry_at,updated_at=NOW()`;
-  }
-}
+type Kind="reply"|"meeting"|"cancelled"|"error"|"success";
+type Notice={kind:Kind;title:string;fields?:Array<{label:string;value:string}>;body?:string;actionUrl?:string;actionLabel?:string};
+const styles:Record<Kind,{emoji:string;color:string}>={reply:{emoji:"💬",color:"#36C5F0"},meeting:{emoji:"📅",color:"#2EB67D"},cancelled:{emoji:"❌",color:"#ECB22E"},error:{emoji:"⚠️",color:"#E01E5A"},success:{emoji:"✅",color:"#2EB67D"}};
+function makePayload(notice:Notice){const style=styles[notice.kind],blocks:object[]=[{type:"header",text:{type:"plain_text",text:`${style.emoji}  ${notice.title}`,emoji:true}}];if(notice.fields?.length)blocks.push({type:"section",fields:notice.fields.map(field=>({type:"mrkdwn",text:`*${field.label}*\n${field.value||"—"}`}))});if(notice.body)blocks.push({type:"section",text:{type:"mrkdwn",text:`*Message*\n>${notice.body.replace(/\n/g,"\n>")}`}});if(notice.actionUrl)blocks.push({type:"actions",elements:[{type:"button",style:notice.kind==="error"?"danger":"primary",text:{type:"plain_text",text:notice.actionLabel??"Open Venluto OS"},url:notice.actionUrl}]});blocks.push({type:"context",elements:[{type:"mrkdwn",text:"*Venluto OS*  •  Live operations alert"}]});return{text:`${style.emoji} ${notice.title}`,attachments:[{color:style.color,blocks}]}}
+export async function notifySlack(idempotencyKey:string,notice:Notice){const url=process.env.SLACK_WEBHOOK_URL;if(!url)return;const payload=makePayload(notice);try{const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});if(!response.ok)throw new Error(`Slack returned ${response.status}: ${(await response.text()).slice(0,180)}`)}catch(error){const message=error instanceof Error?error.message:"Unknown Slack error";await sql`INSERT INTO sync_jobs(provider,operation,idempotency_key,payload_json,status,attempts,last_error,next_retry_at) VALUES ('slack','send_notification',${idempotencyKey},${JSON.stringify({payload})}::jsonb,'failed',1,${message},NOW()+INTERVAL '5 minutes') ON CONFLICT(idempotency_key) DO UPDATE SET status='failed',last_error=EXCLUDED.last_error,next_retry_at=EXCLUDED.next_retry_at,updated_at=NOW()`}}
