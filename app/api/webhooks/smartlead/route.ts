@@ -19,7 +19,7 @@ type Payload = {
 type CategoryValue=string|number|Record<string,unknown>;
 
 const safeEqual=(a:string,b:string)=>{const aa=Buffer.from(a),bb=Buffer.from(b);return aa.length===bb.length&&timingSafeEqual(aa,bb)};
-const plain=(value:string)=>value.replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim();
+const plain=(value:string)=>value.replace(/<br\s*\/?>/gi,"\n").replace(/<\/(p|div|li)>/gi,"\n\n").replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/\r/g,"").replace(/[ \t]+/g," ").replace(/\n[ \t]+/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
 const categoryStrings=(value:unknown,depth=0):string[]=>{if(value===undefined||value===null||depth>4)return[];if(typeof value==="string")return[value.trim()];if(typeof value==="number")return[String(value)];if(Array.isArray(value))return value.flatMap(item=>categoryStrings(item,depth+1));if(typeof value==="object")return Object.values(value as Record<string,unknown>).flatMap(item=>categoryStrings(item,depth+1));return[]};
 
 export async function POST(request:Request){
