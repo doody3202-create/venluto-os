@@ -32,13 +32,14 @@ export async function POST(request:Request){
  const expected=createHmac("sha256",secret).update(raw).digest("hex");
  if(![urlSecret,headerSecret,p.secret_key??""].some(v=>v&&safeEqual(v,secret))&&!(signature&&safeEqual(signature,expected)))return Response.json({error:"Invalid signature"},{status:401});
  const eventType=String(p.event_type??p.type??"EMAIL_REPLY").toUpperCase();
- if(!["EMAIL_REPLY","LEAD_CATEGORY_UPDATED"].includes(eventType))return Response.json({ok:true,ignored:true,eventType});
+ if(!["EMAIL_REPLY","LEAD_CATEGORY_UPDATED"].includes(eventType)){console.info("Smartlead event ignored",{eventType,reason:"event_type"});return Response.json({ok:true,ignored:true,eventType})}
  const category=String(p.lead_category_name??p.category_name??p.lead_category??p.reply_category??p.category??"").trim();
  const allowedCategories=(process.env.SMARTLEAD_POSITIVE_CATEGORIES??"Interested,Meeting Request,Information Request").split(",").map(v=>v.trim().toLowerCase()).filter(Boolean);
- if(!category||!allowedCategories.includes(category.toLowerCase()))return Response.json({ok:true,ignored:true,reason:"reply_category",category:category||null});
+ if(!category||!allowedCategories.includes(category.toLowerCase())){console.info("Smartlead event ignored",{eventType,category:category||null,reason:"reply_category"});return Response.json({ok:true,ignored:true,reason:"reply_category",category:category||null})}
  const campaignFilter=(process.env.SMARTLEAD_CAMPAIGN_FILTER??"Venluto").trim().toLowerCase();
  const incomingCampaign=(p.campaign_name??"").trim();
- if(campaignFilter&&!incomingCampaign.toLowerCase().includes(campaignFilter))return Response.json({ok:true,ignored:true,reason:"campaign_filter",campaign:incomingCampaign});
+ if(campaignFilter&&!incomingCampaign.toLowerCase().includes(campaignFilter)){console.info("Smartlead event ignored",{eventType,category,campaign:incomingCampaign||null,reason:"campaign_filter"});return Response.json({ok:true,ignored:true,reason:"campaign_filter",campaign:incomingCampaign})}
+ console.info("Smartlead positive event accepted",{eventType,category,campaign:incomingCampaign,leadId:String(p.sl_email_lead_id??p.lead_id??"")});
  const requestId=request.headers.get("x-request-id"),replyId=String(p.reply_message?.message_id??p.message_id??p.reply_id??"");
  const eventId=String(requestId??p.event_id??p.id??(replyId||`${p.campaign_id}:${p.sl_email_lead_id??p.lead_id}:${p.event_timestamp??p.received_at}`));
  const inserted=await sql`INSERT INTO integration_events(provider,external_event_id,event_type,payload_json) VALUES ('smartlead',${eventId},${eventType},${raw}::jsonb) ON CONFLICT(provider,external_event_id) DO NOTHING RETURNING id`;
