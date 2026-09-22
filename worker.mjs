@@ -1,0 +1,15 @@
+import postgres from "postgres";
+
+const sql=postgres(process.env.DATABASE_URL,{max:3,idle_timeout:20});
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+async function processClose(job){
+ const {prospectId}=job.payload_json;const [p]=await sql`SELECT p.*,c.name company_name FROM prospects p LEFT JOIN companies c ON c.id=p.company_id WHERE p.id=${prospectId}`;if(!p)throw new Error("Prospect not found");
+ if(process.env.DEMO_MODE!=="false"){await sql`UPDATE prospects SET close_url=${`https://app.close.com/lead/demo-${prospectId}`},updated_at=NOW() WHERE id=${prospectId}`;return}
+ if(!process.env.CLOSE_API_KEY)throw new Error("CLOSE_API_KEY is not configured");
+ const auth=Buffer.from(`${process.env.CLOSE_API_KEY}:`).toString("base64");const response=await fetch("https://api.close.com/api/v1/lead/",{method:"POST",headers:{authorization:`Basic ${auth}`,"content-type":"application/json","idempotency-key":job.idempotency_key},body:JSON.stringify({name:p.company_name??`${p.first_name} ${p.last_name}`,status:"Interested",contacts:[{name:`${p.first_name} ${p.last_name}`,title:p.title,emails:[{email:p.email,type:"office"}]}]})});if(!response.ok)throw new Error(`Close returned ${response.status}: ${(await response.text()).slice(0,180)}`);const result=await response.json();await sql`UPDATE prospects SET close_url=${`https://app.close.com/lead/${result.id}`},updated_at=NOW() WHERE id=${prospectId}`;
+}
+
+async function claim(){return sql.begin(async tx=>{const [job]=await tx`SELECT * FROM sync_jobs WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at<=NOW()) AND (locked_at IS NULL OR locked_at<NOW()-INTERVAL '10 minutes') ORDER BY updated_at ASC FOR UPDATE SKIP LOCKED LIMIT 1`;if(!job)return null;await tx`UPDATE sync_jobs SET locked_at=NOW(),status='processing',updated_at=NOW() WHERE id=${job.id}`;return job})}
+async function run(){console.log("Venluto worker started",{demo:process.env.DEMO_MODE!=="false"});while(true){let job;try{job=await claim();if(!job){await sleep(2000);continue}if(job.provider==='close'&&job.operation==='upsert_prospect')await processClose(job);else throw new Error(`Unsupported job ${job.provider}:${job.operation}`);await sql`UPDATE sync_jobs SET status='succeeded',attempts=attempts+1,last_error=NULL,locked_at=NULL,updated_at=NOW() WHERE id=${job.id}`;console.log("Sync succeeded",{jobId:job.id,provider:job.provider})}catch(error){console.error("Sync failed",error);if(job)await sql`UPDATE sync_jobs SET status='failed',attempts=attempts+1,last_error=${error instanceof Error?error.message:'Unknown error'},locked_at=NULL,next_retry_at=NOW()+INTERVAL '5 minutes',updated_at=NOW() WHERE id=${job.id}`;await sleep(2000)}}}
+process.on('SIGTERM',async()=>{await sql.end();process.exit(0)});run();
