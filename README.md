@@ -81,6 +81,12 @@ Discard an unwanted staged or safely reversible test batch with `DELETE /api/int
 
 Contact fields are flat: `first_name`, `last_name`, `title`, `email`, and `contact_linkedin_url`. A successful `POST` only stages rows; only the explicit confirmed `PATCH` above can commit them.
 
+Malformed orphan recovery is intentionally narrower than batch discard. It requires an exact company ID and batch tag, and refuses deletion unless both company name and domain are empty and no contacts or prospects depend on it:
+
+```json
+{"action":"cleanup_malformed_company","confirmation":"DELETE MALFORMED COMPANY","clientName":"Venluto","batchKey":"probe-shape-001","companyId":50001}
+```
+
 ## Workflow
 
 1. Smartlead posts a reply to `/api/webhooks/smartlead`.

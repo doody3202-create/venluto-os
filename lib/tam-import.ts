@@ -6,6 +6,7 @@ export type ImportRequest={clientName:string;batchKey:string;label?:string;sourc
 const domain=(value:unknown)=>String(value??"").trim().toLowerCase().replace(/^https?:\/\//,"").replace(/^www\./,"").split('/')[0];
 const clean=(value:unknown)=>String(value??"").trim();
 const jsonObject=(value:unknown):TamImportRecord=>{if(value&&typeof value==="object")return value as TamImportRecord;if(typeof value==="string"){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==="object"?parsed as TamImportRecord:{}}catch{return {}}}return {}};
+const nestedJsonObject=(value:unknown):TamImportRecord=>{let current=value;for(let i=0;i<2;i++){const parsed=jsonObject(current);if(Object.keys(parsed).length||typeof current!=="string")return parsed;try{current=JSON.parse(String(current))}catch{return {}}}return jsonObject(current)};
 const rowKey=(record:TamImportRecord,index:number)=>clean(record.provider_id)||domain(record.domain)||clean(record.linkedin_url)||createHash("sha256").update(JSON.stringify(record)+index).digest("hex").slice(0,24);
 
 async function refreshCounts(batchId:number){
@@ -90,5 +91,24 @@ export async function discardImport(batchKey:string,clientName:string){
   if(batch){await tx`DELETE FROM tam_import_rows WHERE batch_id=${batch.id}`;await tx`DELETE FROM tam_import_batches WHERE id=${batch.id}`}
   if(ids.length)await tx`DELETE FROM companies WHERE id=ANY(${ids}) AND NOT EXISTS(SELECT 1 FROM client_companies cc WHERE cc.company_id=companies.id) AND NOT EXISTS(SELECT 1 FROM prospects p WHERE p.company_id=companies.id) AND NOT EXISTS(SELECT 1 FROM tam_contacts tc WHERE tc.company_id=companies.id)`;
   return {ok:true,batchKey,discardedRows:batch?.received_count??0,removedNewCompanies:ids.length,recoveredOrphanedBatch:!batch};
+ });
+}
+
+export async function cleanupMalformedCompany(companyId:number,batchKey:string,clientName:string){
+ await ensureDatabase();
+ return sql.begin(async tx=>{
+  const [row]=await tx`SELECT c.id,c.name,c.domain,cc.id client_company_id,cc.attributes_json FROM companies c JOIN client_companies cc ON cc.company_id=c.id JOIN clients cl ON cl.id=cc.client_id WHERE c.id=${companyId} AND cl.name=${clientName} FOR UPDATE`;
+  if(!row)throw new Error("Company is not linked to this client");
+  const attributes=nestedJsonObject(row.attributes_json);
+  if(clean(attributes.last_import_batch)!==batchKey)throw new Error("Company batch tag does not match; nothing was deleted");
+  if(clean(row.name)||clean(row.domain))throw new Error("Company is not malformed; cleanup refused");
+  const [{contacts}]=await tx`SELECT COUNT(*)::int contacts FROM tam_contacts WHERE company_id=${companyId}`;
+  const [{prospects}]=await tx`SELECT COUNT(*)::int prospects FROM prospects WHERE company_id=${companyId}`;
+  if(contacts||prospects)throw new Error("Company has contacts or prospects; cleanup refused");
+  await tx`DELETE FROM icp_decisions WHERE company_id=${companyId}`;
+  await tx`DELETE FROM company_segments WHERE client_company_id=${row.client_company_id}`;
+  await tx`DELETE FROM client_companies WHERE id=${row.client_company_id}`;
+  await tx`DELETE FROM companies WHERE id=${companyId} AND NOT EXISTS(SELECT 1 FROM client_companies cc WHERE cc.company_id=${companyId})`;
+  return {ok:true,companyId,batchKey,removedMalformedCompanies:1};
  });
 }
