@@ -5,6 +5,7 @@ export type TamImportRecord={company_name?:string;domain?:string;linkedin_url?:s
 export type ImportRequest={clientName:string;batchKey:string;label?:string;source?:string;defaultSegment?:string;records:TamImportRecord[]};
 const domain=(value:unknown)=>String(value??"").trim().toLowerCase().replace(/^https?:\/\//,"").replace(/^www\./,"").split('/')[0];
 const clean=(value:unknown)=>String(value??"").trim();
+const jsonObject=(value:unknown):TamImportRecord=>{if(value&&typeof value==="object")return value as TamImportRecord;if(typeof value==="string"){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==="object"?parsed as TamImportRecord:{}}catch{return {}}}return {}};
 const rowKey=(record:TamImportRecord,index:number)=>clean(record.provider_id)||domain(record.domain)||clean(record.linkedin_url)||createHash("sha256").update(JSON.stringify(record)+index).digest("hex").slice(0,24);
 
 async function refreshCounts(batchId:number){
@@ -54,7 +55,8 @@ export async function commitImport(batchKey:string,clientName:string,limit=500){
  if(!batch)throw new Error("Import batch not found");
  const rows=await sql`SELECT * FROM tam_import_rows WHERE batch_id=${batch.id} AND status='staged' AND resolution NOT IN ('invalid','possible_duplicate') ORDER BY id LIMIT ${Math.min(Math.max(limit,1),1000)}`;
  for(const row of rows){
-  const p=row.payload_json as TamImportRecord,d=domain(p.domain),name=clean(p.company_name)||d,attributes={country:clean(p.country),linkedin_url:clean(p.linkedin_url),provider_id:clean(p.provider_id),last_import_batch:batch.external_batch_key};
+  const p=jsonObject(row.payload_json),d=domain(p.domain),name=clean(p.company_name)||d,attributes={country:clean(p.country),linkedin_url:clean(p.linkedin_url),provider_id:clean(p.provider_id),last_import_batch:batch.external_batch_key};
+  if(!d)throw new Error(`Refusing to commit row ${row.id}: normalized company domain is empty`);
   const [company]=row.matched_company_id?await sql`UPDATE companies SET name=CASE WHEN ${name}<>'' THEN ${name} ELSE name END WHERE id=${row.matched_company_id} RETURNING id`:await sql`INSERT INTO companies(name,domain) VALUES (${name},${d}) ON CONFLICT(domain) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
   const [cc]=await sql`INSERT INTO client_companies(client_id,company_id,icp_status,icp_reason,attributes_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)||'unreviewed'},${clean(p.icp_reason)||null},${JSON.stringify(attributes)}::jsonb) ON CONFLICT(client_id,company_id) DO UPDATE SET icp_status=CASE WHEN EXCLUDED.icp_status<>'unreviewed' THEN EXCLUDED.icp_status ELSE client_companies.icp_status END,icp_reason=COALESCE(EXCLUDED.icp_reason,client_companies.icp_reason),attributes_json=client_companies.attributes_json||EXCLUDED.attributes_json,updated_at=NOW() RETURNING id`;
   for(const segmentName of (Array.isArray(p.segments)?p.segments:[]).map(clean).filter(Boolean)){const [segment]=await sql`INSERT INTO tam_segments(client_id,name) VALUES (${batch.client_id},${segmentName}) ON CONFLICT(client_id,name) DO UPDATE SET name=EXCLUDED.name RETURNING id`;await sql`INSERT INTO company_segments(client_company_id,segment_id,source) VALUES (${cc.id},${segment.id},${batch.source}) ON CONFLICT DO NOTHING`}
@@ -70,21 +72,23 @@ export async function commitImport(batchKey:string,clientName:string,limit=500){
 export async function discardImport(batchKey:string,clientName:string){
  await ensureDatabase();
  return sql.begin(async tx=>{
+  const [client]=await tx`SELECT id FROM clients WHERE name=${clientName}`;
+  if(!client)throw new Error("Client not found");
   const [batch]=await tx`SELECT b.*,c.name client_name FROM tam_import_batches b JOIN clients c ON c.id=b.client_id WHERE b.external_batch_key=${batchKey} AND c.name=${clientName} FOR UPDATE`;
-  if(!batch)throw new Error("Import batch not found");
-  const created=await tx`SELECT DISTINCT c.id FROM tam_import_rows r JOIN companies c ON c.domain=r.payload_json->>'domain' WHERE r.batch_id=${batch.id} AND r.status='committed' AND r.resolution='new'`;
+  const created=batch
+   ?await tx`SELECT DISTINCT c.id FROM tam_import_rows r JOIN companies c ON c.domain=r.payload_json->>'domain' WHERE r.batch_id=${batch.id} AND r.status='committed' AND r.resolution='new'`
+   :await tx`SELECT DISTINCT c.id FROM client_companies cc JOIN companies c ON c.id=cc.company_id WHERE cc.client_id=${client.id} AND cc.attributes_json->>'last_import_batch'=${batchKey} AND (c.name='' OR c.domain='')`;
   const ids=created.map(row=>row.id as number);
   if(ids.length){
-   const [{count:contacts}]=await tx`SELECT COUNT(*)::int count FROM tam_contacts WHERE client_id=${batch.client_id} AND company_id=ANY(${ids})`;
+   const [{count:contacts}]=await tx`SELECT COUNT(*)::int count FROM tam_contacts WHERE client_id=${client.id} AND company_id=ANY(${ids})`;
    const [{count:prospects}]=await tx`SELECT COUNT(*)::int count FROM prospects WHERE company_id=ANY(${ids})`;
    if(contacts||prospects)throw new Error("Cannot discard: committed companies now have contacts or prospects. Review them manually.");
-   await tx`DELETE FROM icp_decisions WHERE client_id=${batch.client_id} AND company_id=ANY(${ids}) AND criteria_json->>'batchKey'=${batchKey}`;
-   await tx`DELETE FROM company_segments WHERE client_company_id IN (SELECT id FROM client_companies WHERE client_id=${batch.client_id} AND company_id=ANY(${ids}))`;
-   await tx`DELETE FROM client_companies WHERE client_id=${batch.client_id} AND company_id=ANY(${ids}) AND attributes_json->>'last_import_batch'=${batchKey}`;
+   await tx`DELETE FROM icp_decisions WHERE client_id=${client.id} AND company_id=ANY(${ids}) AND criteria_json->>'batchKey'=${batchKey}`;
+   await tx`DELETE FROM company_segments WHERE client_company_id IN (SELECT id FROM client_companies WHERE client_id=${client.id} AND company_id=ANY(${ids}))`;
+   await tx`DELETE FROM client_companies WHERE client_id=${client.id} AND company_id=ANY(${ids}) AND attributes_json->>'last_import_batch'=${batchKey}`;
   }
-  await tx`DELETE FROM tam_import_rows WHERE batch_id=${batch.id}`;
-  await tx`DELETE FROM tam_import_batches WHERE id=${batch.id}`;
+  if(batch){await tx`DELETE FROM tam_import_rows WHERE batch_id=${batch.id}`;await tx`DELETE FROM tam_import_batches WHERE id=${batch.id}`}
   if(ids.length)await tx`DELETE FROM companies WHERE id=ANY(${ids}) AND NOT EXISTS(SELECT 1 FROM client_companies cc WHERE cc.company_id=companies.id) AND NOT EXISTS(SELECT 1 FROM prospects p WHERE p.company_id=companies.id) AND NOT EXISTS(SELECT 1 FROM tam_contacts tc WHERE tc.company_id=companies.id)`;
-  return {ok:true,batchKey,discardedRows:batch.received_count,removedNewCompanies:ids.length};
+  return {ok:true,batchKey,discardedRows:batch?.received_count??0,removedNewCompanies:ids.length,recoveredOrphanedBatch:!batch};
  });
 }
