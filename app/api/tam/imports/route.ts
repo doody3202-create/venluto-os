@@ -1,5 +1,0 @@
-import { commitImport, importStatus, stageImport, type ImportRequest } from "@/lib/tam-import";
-export const dynamic="force-dynamic";
-export async function GET(request:Request){const url=new URL(request.url),batchKey=url.searchParams.get("batchKey")??"",clientName=url.searchParams.get("clientName")??"";if(!batchKey||!clientName)return Response.json({error:"batchKey and clientName are required"},{status:400});const result=await importStatus(batchKey,clientName);return result?Response.json(result):Response.json({error:"Batch not found"},{status:404})}
-export async function POST(request:Request){try{return Response.json(await stageImport(await request.json() as ImportRequest),{status:201})}catch(error){return Response.json({error:error instanceof Error?error.message:"Import failed"},{status:400})}}
-export async function PATCH(request:Request){try{const body=await request.json() as{batchKey:string;clientName:string;limit?:number};return Response.json(await commitImport(body.batchKey,body.clientName,body.limit))}catch(error){return Response.json({error:error instanceof Error?error.message:"Commit failed"},{status:400})}}
