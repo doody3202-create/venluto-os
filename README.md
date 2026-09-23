@@ -39,6 +39,40 @@ Set `TAM_API_KEY` to expose the read-only Claude Code API. Authenticate with `Au
 - `/api/internal/tam?resource=contacts&limit=100&offset=0`
 - `/api/internal/tam?resource=job_contacts&job_id=<id>&limit=500&offset=0` for the exact approved/exported records
 
+### Claude Code reconciliation and import
+
+Send up to 1,000 records per request to `POST /api/internal/tam/import` using the same `Authorization: Bearer <TAM_API_KEY>` header. Reuse one stable `batchKey` for every chunk and retry; rows are idempotent within that batch.
+
+```json
+{
+  "clientName": "Venluto",
+  "batchKey": "venluto-tam-2026-09",
+  "label": "Venluto TAM",
+  "source": "Claude Code",
+  "defaultSegment": "B2B SaaS",
+  "records": [{
+    "company_name": "Acme",
+    "domain": "acme.com",
+    "linkedin_url": "https://linkedin.com/company/acme",
+    "provider_id": "source-123",
+    "country": "UK",
+    "segments": ["B2B SaaS", "Founder-led"],
+    "icp_status": "fit",
+    "icp_reason": "Matches size and industry"
+  }]
+}
+```
+
+Preview with `GET /api/internal/tam/import?clientName=Venluto&batchKey=venluto-tam-2026-09`. The response separates new, existing, existing-with-update, existing-with-new-segment, possible duplicates, and invalid records. Nothing enters the TAM yet.
+
+Commit safe records in resumable chunks with `PATCH /api/internal/tam/import`:
+
+```json
+{"clientName":"Venluto","batchKey":"venluto-tam-2026-09","limit":500}
+```
+
+Repeat until `done` is `true`. Possible duplicates and invalid rows remain staged for review and are never silently discarded.
+
 ## Workflow
 
 1. Smartlead posts a reply to `/api/webhooks/smartlead`.

@@ -29,6 +29,10 @@ const schema = [
 `CREATE TABLE IF NOT EXISTS list_job_steps (id BIGSERIAL PRIMARY KEY, job_id BIGINT NOT NULL REFERENCES list_jobs(id), step_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', input_count INTEGER NOT NULL DEFAULT 0, output_count INTEGER NOT NULL DEFAULT 0, api_calls INTEGER NOT NULL DEFAULT 0, loss_reasons_json JSONB NOT NULL DEFAULT '{}', checkpoint_json JSONB NOT NULL DEFAULT '{}', started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, UNIQUE(job_id,step_key))`,
 `CREATE TABLE IF NOT EXISTS list_job_contacts (job_id BIGINT NOT NULL REFERENCES list_jobs(id), contact_id BIGINT NOT NULL REFERENCES tam_contacts(id), disposition TEXT NOT NULL, reason_code TEXT, added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(job_id,contact_id))`,
 `CREATE TABLE IF NOT EXISTS list_exports (id BIGSERIAL PRIMARY KEY, job_id BIGINT NOT NULL REFERENCES list_jobs(id), destination TEXT NOT NULL, external_list_id TEXT, contact_count INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'approved', exported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), metadata_json JSONB NOT NULL DEFAULT '{}')`,
+`CREATE TABLE IF NOT EXISTS tam_segments (id BIGSERIAL PRIMARY KEY, client_id BIGINT NOT NULL REFERENCES clients(id), name TEXT NOT NULL, description TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(client_id,name))`,
+`CREATE TABLE IF NOT EXISTS company_segments (client_company_id BIGINT NOT NULL REFERENCES client_companies(id), segment_id BIGINT NOT NULL REFERENCES tam_segments(id), source TEXT NOT NULL DEFAULT 'import', added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(client_company_id,segment_id))`,
+`CREATE TABLE IF NOT EXISTS tam_import_batches (id BIGSERIAL PRIMARY KEY, client_id BIGINT NOT NULL REFERENCES clients(id), external_batch_key TEXT NOT NULL, label TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'staging', received_count INTEGER NOT NULL DEFAULT 0, committed_count INTEGER NOT NULL DEFAULT 0, counts_json JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(client_id,external_batch_key))`,
+`CREATE TABLE IF NOT EXISTS tam_import_rows (id BIGSERIAL PRIMARY KEY, batch_id BIGINT NOT NULL REFERENCES tam_import_batches(id), row_key TEXT NOT NULL, payload_json JSONB NOT NULL, resolution TEXT NOT NULL, matched_company_id BIGINT REFERENCES companies(id), reason TEXT, status TEXT NOT NULL DEFAULT 'staged', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(batch_id,row_key))`,
 `CREATE INDEX IF NOT EXISTS idx_prospects_status_deadline ON prospects(status,deadline_at)`,
 `CREATE INDEX IF NOT EXISTS idx_replies_prospect_received ON replies(prospect_id,received_at)`,
 `CREATE INDEX IF NOT EXISTS idx_meetings_starts_status ON meetings(starts_at,status)`,
@@ -36,6 +40,8 @@ const schema = [
 `CREATE INDEX IF NOT EXISTS idx_tam_contacts_eligibility ON tam_contacts(client_id,eligibility_status,email_status)`,
 `CREATE INDEX IF NOT EXISTS idx_contact_usage_lookup ON contact_usage(client_id,contact_id,usage_type)`,
 `CREATE INDEX IF NOT EXISTS idx_list_jobs_client_status ON list_jobs(client_id,status,updated_at)`,
+`CREATE INDEX IF NOT EXISTS idx_tam_import_rows_batch_status ON tam_import_rows(batch_id,status,id)`,
+`CREATE INDEX IF NOT EXISTS idx_company_segments_segment ON company_segments(segment_id,client_company_id)`,
 ];
 
 export function ensureDatabase(){
