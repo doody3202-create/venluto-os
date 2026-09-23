@@ -1,0 +1,7 @@
+import { randomBytes } from "node:crypto";
+import { ensureDatabase, sql } from "@/lib/db";
+import { hashApiKey } from "@/lib/tam-auth";
+export const dynamic="force-dynamic";
+
+export async function GET(){await ensureDatabase();const clients=await sql`SELECT c.id,c.name,c.status,c.created_at,(SELECT COUNT(*)::int FROM client_companies cc WHERE cc.client_id=c.id) companies,(SELECT COUNT(*)::int FROM tam_contacts tc WHERE tc.client_id=c.id) contacts,(SELECT COUNT(*)::int FROM tam_segments s WHERE s.client_id=c.id) segments FROM clients c WHERE c.status='active' ORDER BY CASE WHEN c.name='Venluto' THEN 0 ELSE 1 END,c.name`;return Response.json({clients})}
+export async function POST(request:Request){await ensureDatabase();const body=await request.json() as{name?:string};const name=body.name?.trim();if(!name||name.length<2||name.length>100)return Response.json({error:"Client name must contain 2 to 100 characters"},{status:400});const apiKey=`tam_${randomBytes(24).toString('base64url')}`;try{const [client]=await sql`INSERT INTO clients(name,api_key_hash) VALUES (${name},${hashApiKey(apiKey)}) RETURNING id,name,status,created_at`;return Response.json({ok:true,client,apiKey,warning:"Copy this API key now. It is shown only once."},{status:201})}catch(error){if(error instanceof Error&&error.message.includes('duplicate'))return Response.json({error:"A client workspace with this name already exists"},{status:409});throw error}}

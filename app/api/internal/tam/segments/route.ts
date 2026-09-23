@@ -1,25 +1,24 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { ensureDatabase, sql } from "@/lib/db";
+import { authenticatedTamClient, sameClient } from "@/lib/tam-auth";
 export const dynamic="force-dynamic";
 
 type Signal={key?:string;type?:string;title?:string;summary?:string;source_url?:string;observed_at?:string;metadata?:Record<string,unknown>};
 type Update={domain?:string;segments?:string[];attributes?:Record<string,unknown>;signals?:Signal[]};
 type Input={clientName?:string;batchKey?:string;updates?:Update[]};
 const domain=(value:string)=>value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].split(':')[0];
-const safe=(value:string,expected:string)=>{const a=Buffer.from(value),b=Buffer.from(expected);return a.length===b.length&&timingSafeEqual(a,b)};
-function authorized(request:Request){const expected=process.env.TAM_API_KEY??"",provided=request.headers.get("authorization")?.replace(/^Bearer\s+/i,"")??request.headers.get("x-api-key")??"";return Boolean(expected)&&safe(provided,expected)}
-
 export async function GET(request:Request){
- if(!authorized(request))return Response.json({error:"Unauthorized"},{status:401});
- return Response.json({schemaVersion:"2026-09-23",purpose:"Attach Claude-researched segments, company attributes and public evidence to companies already in the Master TAM",method:"POST",limits:{updatesPerRequest:1000,signalsPerCompany:20},identity:"normalized company domain",body:{clientName:"Venluto",batchKey:"google-ads-hiring-2026-09",updates:[{domain:"example.com",segments:["service:google_ads","vertical:saas","signal:hiring_ppc"],attributes:{sub_niche:"Google Ads for SaaS",research_status:"researched"},signals:[{key:"job:example:ppc-1",type:"job_posting",title:"Hiring PPC Specialist",summary:"Public job post matched to the company's target vertical.",source_url:"https://example.com/job",observed_at:"2026-09-23T00:00:00Z",metadata:{role:"PPC Specialist",vertical:"saas"}}]}]},rules:["Only existing TAM companies are updated; unknown domains are returned as missing.","POST is idempotent: segments and signal keys are upserted.","Use stable batchKey and signal keys so interrupted work can be safely resumed.","No Smartlead upload or outreach is performed."]});
+ const owner=await authenticatedTamClient(request);if(!owner)return Response.json({error:"Unauthorized"},{status:401});
+ return Response.json({schemaVersion:"2026-09-23",workspace:{id:owner.id,name:owner.name},purpose:"Attach Claude-researched segments, company attributes and public evidence to companies already in this workspace's Master TAM",method:"POST",limits:{updatesPerRequest:1000,signalsPerCompany:20},identity:"normalized company domain",body:{clientName:owner.name,batchKey:"stable-research-key",updates:[{domain:"example.com",segments:["service:google_ads","vertical:saas","signal:hiring_ppc"],attributes:{sub_niche:"Google Ads for SaaS",research_status:"researched"},signals:[{key:"job:example:ppc-1",type:"job_posting",title:"Hiring PPC Specialist",summary:"Public job post matched to the company's target vertical.",source_url:"https://example.com/job",observed_at:"2026-09-23T00:00:00Z",metadata:{role:"PPC Specialist",vertical:"saas"}}]}]},rules:["This credential is locked to the workspace above.","Only existing TAM companies are updated; unknown domains are returned as missing.","POST is idempotent: segments and signal keys are upserted.","No Smartlead upload or outreach is performed."]});
 }
 
 export async function POST(request:Request){
- if(!authorized(request))return Response.json({error:"Unauthorized"},{status:401});
+ const owner=await authenticatedTamClient(request);if(!owner)return Response.json({error:"Unauthorized"},{status:401});
  await ensureDatabase();const body=await request.json() as Input;
  if(!body.clientName?.trim()||!body.batchKey?.trim()||!Array.isArray(body.updates))return Response.json({error:"clientName, batchKey and updates are required"},{status:400});
+ if(!sameClient(owner,body.clientName))return Response.json({error:"This API key cannot write to the requested client workspace"},{status:403});
  if(body.updates.length<1||body.updates.length>1000)return Response.json({error:"updates must contain 1 to 1,000 records"},{status:400});
- const batchKey=body.batchKey.trim(),[client]=await sql`SELECT id FROM clients WHERE name=${body.clientName.trim()}`;if(!client)return Response.json({error:"Client not found"},{status:404});
+ const batchKey=body.batchKey.trim(),client=owner;
  const result={received:body.updates.length,matched:0,missing:0,segmentsApplied:0,signalsUpserted:0,attributesUpdated:0,missingDomains:[] as string[]};
  await sql.begin(async tx=>{for(const update of body.updates!){const normalized=domain(update.domain??"");if(!normalized){result.missing++;if(result.missingDomains.length<50)result.missingDomains.push(update.domain??"");continue}
    const [company]=await tx`SELECT cc.id client_company_id,c.id company_id FROM client_companies cc JOIN companies c ON c.id=cc.company_id WHERE cc.client_id=${client.id} AND c.domain=${normalized}`;
