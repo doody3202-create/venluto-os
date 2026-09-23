@@ -42,6 +42,7 @@ const schema = [
 `CREATE INDEX IF NOT EXISTS idx_list_jobs_client_status ON list_jobs(client_id,status,updated_at)`,
 `CREATE INDEX IF NOT EXISTS idx_tam_import_rows_batch_status ON tam_import_rows(batch_id,status,id)`,
 `CREATE INDEX IF NOT EXISTS idx_company_segments_segment ON company_segments(segment_id,client_company_id)`,
+`UPDATE tam_contacts tc SET eligibility_status='held',eligibility_reason='Company ICP status is hold',updated_at=NOW() FROM client_companies cc WHERE cc.client_id=tc.client_id AND cc.company_id=tc.company_id AND cc.icp_status IN ('hold','held') AND tc.eligibility_status='eligible'`,
 ];
 
 export function ensureDatabase(){
