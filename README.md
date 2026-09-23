@@ -84,7 +84,7 @@ Contact fields are flat: `first_name`, `last_name`, `title`, `email`, and `conta
 Malformed orphan recovery is intentionally narrower than batch discard. It requires an exact company ID and batch tag, and refuses deletion unless both company name and domain are empty and no contacts or prospects depend on it:
 
 ```json
-{"action":"cleanup_malformed_company","confirmation":"DELETE MALFORMED COMPANY","clientName":"Venluto","batchKey":"probe-shape-001","companyId":50001}
+{"action":"cleanup_malformed_company","confirmation":"DELETE MALFORMED COMPANY","clientName":"Venluto","batchKey":"probe-shape-001","clientCompanyId":50001}
 ```
 
 ## Workflow

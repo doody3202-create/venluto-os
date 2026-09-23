@@ -94,21 +94,21 @@ export async function discardImport(batchKey:string,clientName:string){
  });
 }
 
-export async function cleanupMalformedCompany(companyId:number,batchKey:string,clientName:string){
+export async function cleanupMalformedCompany(clientCompanyId:number,batchKey:string,clientName:string){
  await ensureDatabase();
  return sql.begin(async tx=>{
-  const [row]=await tx`SELECT c.id,c.name,c.domain,cc.id client_company_id,cc.attributes_json FROM companies c JOIN client_companies cc ON cc.company_id=c.id JOIN clients cl ON cl.id=cc.client_id WHERE c.id=${companyId} AND cl.name=${clientName} FOR UPDATE`;
+  const [row]=await tx`SELECT c.id company_id,c.name,c.domain,cc.id client_company_id,cc.attributes_json FROM companies c JOIN client_companies cc ON cc.company_id=c.id JOIN clients cl ON cl.id=cc.client_id WHERE cc.id=${clientCompanyId} AND cl.name=${clientName} FOR UPDATE`;
   if(!row)throw new Error("Company is not linked to this client");
   const attributes=nestedJsonObject(row.attributes_json);
   if(clean(attributes.last_import_batch)!==batchKey)throw new Error("Company batch tag does not match; nothing was deleted");
   if(clean(row.name)||clean(row.domain))throw new Error("Company is not malformed; cleanup refused");
-  const [{contacts}]=await tx`SELECT COUNT(*)::int contacts FROM tam_contacts WHERE company_id=${companyId}`;
-  const [{prospects}]=await tx`SELECT COUNT(*)::int prospects FROM prospects WHERE company_id=${companyId}`;
+  const [{contacts}]=await tx`SELECT COUNT(*)::int contacts FROM tam_contacts WHERE company_id=${row.company_id}`;
+  const [{prospects}]=await tx`SELECT COUNT(*)::int prospects FROM prospects WHERE company_id=${row.company_id}`;
   if(contacts||prospects)throw new Error("Company has contacts or prospects; cleanup refused");
-  await tx`DELETE FROM icp_decisions WHERE company_id=${companyId}`;
+  await tx`DELETE FROM icp_decisions WHERE company_id=${row.company_id}`;
   await tx`DELETE FROM company_segments WHERE client_company_id=${row.client_company_id}`;
   await tx`DELETE FROM client_companies WHERE id=${row.client_company_id}`;
-  await tx`DELETE FROM companies WHERE id=${companyId} AND NOT EXISTS(SELECT 1 FROM client_companies cc WHERE cc.company_id=${companyId})`;
-  return {ok:true,companyId,batchKey,removedMalformedCompanies:1};
+  await tx`DELETE FROM companies WHERE id=${row.company_id} AND NOT EXISTS(SELECT 1 FROM client_companies cc WHERE cc.company_id=${row.company_id})`;
+  return {ok:true,clientCompanyId,companyId:row.company_id,batchKey,removedMalformedCompanies:1};
  });
 }
