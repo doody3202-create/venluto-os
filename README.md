@@ -83,6 +83,8 @@ Discard an unwanted staged or safely reversible test batch with `DELETE /api/int
 
 Contact fields are flat: `first_name`, `last_name`, `title`, `email`, and `contact_linkedin_url`. A successful `POST` only stages rows; only the explicit confirmed `PATCH` above can commit them.
 
+Use `eligibility_status` and `eligibility_reason` for contact-level decisions such as non-target titles. Company `icp_status` remains a company-level decision. Import commits also create and link a `source_batches` record so provenance survives beyond the staging batch.
+
 Malformed orphan recovery is intentionally narrower than batch discard. It requires an exact company ID and batch tag, and refuses deletion unless both company name and domain are empty and no contacts or prospects depend on it:
 
 ```json
