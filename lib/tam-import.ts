@@ -13,7 +13,7 @@ async function refreshCounts(batchId:number){
  const rows=await sql`SELECT resolution,COUNT(*)::int count FROM tam_import_rows WHERE batch_id=${batchId} GROUP BY resolution`;
  const counts=Object.fromEntries(rows.map(r=>[r.resolution,r.count]));
  const [{received,committed}]=await sql`SELECT COUNT(*)::int received,COUNT(*) FILTER(WHERE status='committed')::int committed FROM tam_import_rows WHERE batch_id=${batchId}`;
- await sql`UPDATE tam_import_batches SET received_count=${received},committed_count=${committed},counts_json=${JSON.stringify(counts)}::jsonb,updated_at=NOW() WHERE id=${batchId}`;
+ await sql`UPDATE tam_import_batches SET received_count=${received},committed_count=${committed},counts_json=${sql.json(counts)},updated_at=NOW() WHERE id=${batchId}`;
  return {received,committed,...counts};
 }
 
@@ -35,7 +35,7 @@ export async function stageImport(input:ImportRequest){
    if(!matchedCompanyId&&name&&country){const [possible]=await sql`SELECT c.id FROM client_companies cc JOIN companies c ON c.id=cc.company_id WHERE cc.client_id=${client.id} AND LOWER(REGEXP_REPLACE(c.name,'[^a-zA-Z0-9]','','g'))=LOWER(REGEXP_REPLACE(${name},'[^a-zA-Z0-9]','','g')) AND cc.attributes_json->>'country'=${country} LIMIT 1`;if(possible){resolution="possible_duplicate";matchedCompanyId=possible.id;reason="Same normalized name and country; review required"}}
   }
   const payload={...record,domain:d,company_name:name,segments:[...new Set([...(Array.isArray(record.segments)?record.segments:[]),clean(record.segment),clean(input.defaultSegment)].filter(Boolean))]};
-  await sql`INSERT INTO tam_import_rows(batch_id,row_key,payload_json,resolution,matched_company_id,reason) VALUES (${batch.id},${rowKey(record,index)},${JSON.stringify(payload)}::jsonb,${resolution},${matchedCompanyId},${reason}) ON CONFLICT(batch_id,row_key) DO UPDATE SET payload_json=EXCLUDED.payload_json,resolution=EXCLUDED.resolution,matched_company_id=EXCLUDED.matched_company_id,reason=EXCLUDED.reason,updated_at=NOW()`;
+  await sql`INSERT INTO tam_import_rows(batch_id,row_key,payload_json,resolution,matched_company_id,reason) VALUES (${batch.id},${rowKey(record,index)},${sql.json(payload)},${resolution},${matchedCompanyId},${reason}) ON CONFLICT(batch_id,row_key) DO UPDATE SET payload_json=EXCLUDED.payload_json,resolution=EXCLUDED.resolution,matched_company_id=EXCLUDED.matched_company_id,reason=EXCLUDED.reason,updated_at=NOW()`;
  }
  const counts=await refreshCounts(batch.id);
  return {batchId:batch.id,batchKey:input.batchKey,status:batch.status,counts,resumable:true,next:"preview"};
@@ -45,8 +45,10 @@ export async function importStatus(batchKey:string,clientName:string){
  await ensureDatabase();
  const [batch]=await sql`SELECT b.*,c.name client_name FROM tam_import_batches b JOIN clients c ON c.id=b.client_id WHERE b.external_batch_key=${batchKey} AND c.name=${clientName}`;
  if(!batch)return null;
- const samples=await sql`SELECT id,row_key,resolution,reason,payload_json->>'company_name' company_name,payload_json->>'domain' domain,status FROM tam_import_rows WHERE batch_id=${batch.id} ORDER BY id LIMIT 12`;
- const segments=await sql`SELECT value segment,COUNT(*)::int count FROM tam_import_rows r CROSS JOIN LATERAL jsonb_array_elements_text(r.payload_json->'segments') value WHERE r.batch_id=${batch.id} GROUP BY value ORDER BY count DESC`;
+ const rawSamples=await sql`SELECT id,row_key,resolution,reason,payload_json,status FROM tam_import_rows WHERE batch_id=${batch.id} ORDER BY id LIMIT 12`;
+ const samples=rawSamples.map(row=>{const payload=nestedJsonObject(row.payload_json);return{id:row.id,row_key:row.row_key,resolution:row.resolution,reason:row.reason,status:row.status,company_name:clean(payload.company_name)||null,domain:domain(payload.domain)||null,linkedin_url:clean(payload.linkedin_url)||null,provider_id:clean(payload.provider_id)||null,country:clean(payload.country)||null,segments:Array.isArray(payload.segments)?payload.segments:[],icp_status:clean(payload.icp_status)||null,icp_reason:clean(payload.icp_reason)||null,first_name:clean(payload.first_name)||null,last_name:clean(payload.last_name)||null,title:clean(payload.title)||null,email:normalizeEmail(clean(payload.email))||null,contact_linkedin_url:clean(payload.contact_linkedin_url)||null}});
+ const segmentCounts=new Map<string,number>();for(const sample of samples)for(const value of sample.segments){const segment=clean(value);if(segment)segmentCounts.set(segment,(segmentCounts.get(segment)??0)+1)}
+ const segments=[...segmentCounts].map(([segment,count])=>({segment,count})).sort((a,b)=>b.count-a.count||a.segment.localeCompare(b.segment));
  return {...batch,samples,segments};
 }
 
@@ -59,9 +61,9 @@ export async function commitImport(batchKey:string,clientName:string,limit=500){
   const p=jsonObject(row.payload_json),d=domain(p.domain),name=clean(p.company_name)||d,attributes={country:clean(p.country),linkedin_url:clean(p.linkedin_url),provider_id:clean(p.provider_id),last_import_batch:batch.external_batch_key};
   if(!d)throw new Error(`Refusing to commit row ${row.id}: normalized company domain is empty`);
   const [company]=row.matched_company_id?await sql`UPDATE companies SET name=CASE WHEN ${name}<>'' THEN ${name} ELSE name END WHERE id=${row.matched_company_id} RETURNING id`:await sql`INSERT INTO companies(name,domain) VALUES (${name},${d}) ON CONFLICT(domain) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
-  const [cc]=await sql`INSERT INTO client_companies(client_id,company_id,icp_status,icp_reason,attributes_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)||'unreviewed'},${clean(p.icp_reason)||null},${JSON.stringify(attributes)}::jsonb) ON CONFLICT(client_id,company_id) DO UPDATE SET icp_status=CASE WHEN EXCLUDED.icp_status<>'unreviewed' THEN EXCLUDED.icp_status ELSE client_companies.icp_status END,icp_reason=COALESCE(EXCLUDED.icp_reason,client_companies.icp_reason),attributes_json=client_companies.attributes_json||EXCLUDED.attributes_json,updated_at=NOW() RETURNING id`;
+  const [cc]=await sql`INSERT INTO client_companies(client_id,company_id,icp_status,icp_reason,attributes_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)||'unreviewed'},${clean(p.icp_reason)||null},${sql.json(attributes)}) ON CONFLICT(client_id,company_id) DO UPDATE SET icp_status=CASE WHEN EXCLUDED.icp_status<>'unreviewed' THEN EXCLUDED.icp_status ELSE client_companies.icp_status END,icp_reason=COALESCE(EXCLUDED.icp_reason,client_companies.icp_reason),attributes_json=client_companies.attributes_json||EXCLUDED.attributes_json,updated_at=NOW() RETURNING id`;
   for(const segmentName of (Array.isArray(p.segments)?p.segments:[]).map(clean).filter(Boolean)){const [segment]=await sql`INSERT INTO tam_segments(client_id,name) VALUES (${batch.client_id},${segmentName}) ON CONFLICT(client_id,name) DO UPDATE SET name=EXCLUDED.name RETURNING id`;await sql`INSERT INTO company_segments(client_company_id,segment_id,source) VALUES (${cc.id},${segment.id},${batch.source}) ON CONFLICT DO NOTHING`}
-  if(clean(p.icp_status))await sql`INSERT INTO icp_decisions(client_id,company_id,decision,reason_code,reason_text,criteria_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)},'imported_decision',${clean(p.icp_reason)||null},${JSON.stringify({batchKey:batch.external_batch_key})}::jsonb)`;
+  if(clean(p.icp_status))await sql`INSERT INTO icp_decisions(client_id,company_id,decision,reason_code,reason_text,criteria_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)},'imported_decision',${clean(p.icp_reason)||null},${sql.json({batchKey:batch.external_batch_key})})`;
   const email=normalizeEmail(clean(p.email));if(email||clean(p.contact_linkedin_url)){await sql`INSERT INTO tam_contacts(client_id,company_id,first_name,last_name,title,email,normalized_email,linkedin_url,email_status,eligibility_status) SELECT ${batch.client_id},${company.id},${clean(p.first_name)||'Unknown'},${clean(p.last_name)},${clean(p.title)},${email||null},${email||null},${clean(p.contact_linkedin_url)||null},${email?'unverified':'missing'},'eligible' WHERE NOT EXISTS(SELECT 1 FROM tam_contacts WHERE client_id=${batch.client_id} AND ((${email||null} IS NOT NULL AND normalized_email=${email||null}) OR (${clean(p.contact_linkedin_url)||null} IS NOT NULL AND linkedin_url=${clean(p.contact_linkedin_url)||null})))`}
   await sql`UPDATE tam_import_rows SET status='committed',updated_at=NOW() WHERE id=${row.id}`;
  }
