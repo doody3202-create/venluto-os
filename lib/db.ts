@@ -43,6 +43,9 @@ const schema = [
 `CREATE INDEX IF NOT EXISTS idx_tam_import_rows_batch_status ON tam_import_rows(batch_id,status,id)`,
 `CREATE INDEX IF NOT EXISTS idx_company_segments_segment ON company_segments(segment_id,client_company_id)`,
 `UPDATE tam_contacts tc SET eligibility_status='held',eligibility_reason='Company ICP status is hold',updated_at=NOW() FROM client_companies cc WHERE cc.client_id=tc.client_id AND cc.company_id=tc.company_id AND cc.icp_status IN ('hold','held') AND tc.eligibility_status='eligible'`,
+`CREATE OR REPLACE FUNCTION sync_tam_contact_eligibility_from_company() RETURNS TRIGGER AS $$ BEGIN IF NEW.icp_status IN ('hold','held','excluded','rejected','not_fit') THEN UPDATE tam_contacts SET eligibility_status='held',eligibility_reason='Company ICP status is '||NEW.icp_status,updated_at=NOW() WHERE client_id=NEW.client_id AND company_id=NEW.company_id AND (eligibility_status='eligible' OR eligibility_reason LIKE 'Company ICP status is %'); ELSIF TG_OP='UPDATE' AND OLD.icp_status IN ('hold','held','excluded','rejected','not_fit') THEN UPDATE tam_contacts SET eligibility_status='eligible',eligibility_reason=NULL,updated_at=NOW() WHERE client_id=NEW.client_id AND company_id=NEW.company_id AND eligibility_status='held' AND eligibility_reason LIKE 'Company ICP status is %'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`,
+`DROP TRIGGER IF EXISTS trg_sync_tam_contact_eligibility ON client_companies`,
+`CREATE TRIGGER trg_sync_tam_contact_eligibility AFTER INSERT OR UPDATE OF icp_status ON client_companies FOR EACH ROW EXECUTE FUNCTION sync_tam_contact_eligibility_from_company()`,
 ];
 
 export function ensureDatabase(){
