@@ -54,22 +54,31 @@ export async function importStatus(batchKey:string,clientName:string){
 
 export async function commitImport(batchKey:string,clientName:string,limit=500){
  await ensureDatabase();
- const [batch]=await sql`SELECT b.*,c.name client_name FROM tam_import_batches b JOIN clients c ON c.id=b.client_id WHERE b.external_batch_key=${batchKey} AND c.name=${clientName}`;
- if(!batch)throw new Error("Import batch not found");
- const rows=await sql`SELECT * FROM tam_import_rows WHERE batch_id=${batch.id} AND status='staged' AND resolution NOT IN ('invalid','possible_duplicate') ORDER BY id LIMIT ${Math.min(Math.max(limit,1),1000)}`;
- for(const row of rows){
-  const p=jsonObject(row.payload_json),d=domain(p.domain),name=clean(p.company_name)||d,attributes={country:clean(p.country),linkedin_url:clean(p.linkedin_url),provider_id:clean(p.provider_id),last_import_batch:batch.external_batch_key};
-  if(!d)throw new Error(`Refusing to commit row ${row.id}: normalized company domain is empty`);
-  const [company]=row.matched_company_id?await sql`UPDATE companies SET name=CASE WHEN ${name}<>'' THEN ${name} ELSE name END WHERE id=${row.matched_company_id} RETURNING id`:await sql`INSERT INTO companies(name,domain) VALUES (${name},${d}) ON CONFLICT(domain) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
-  const [cc]=await sql`INSERT INTO client_companies(client_id,company_id,icp_status,icp_reason,attributes_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)||'unreviewed'},${clean(p.icp_reason)||null},${sql.json(attributes)}) ON CONFLICT(client_id,company_id) DO UPDATE SET icp_status=CASE WHEN EXCLUDED.icp_status<>'unreviewed' THEN EXCLUDED.icp_status ELSE client_companies.icp_status END,icp_reason=COALESCE(EXCLUDED.icp_reason,client_companies.icp_reason),attributes_json=client_companies.attributes_json||EXCLUDED.attributes_json,updated_at=NOW() RETURNING id`;
-  for(const segmentName of (Array.isArray(p.segments)?p.segments:[]).map(clean).filter(Boolean)){const [segment]=await sql`INSERT INTO tam_segments(client_id,name) VALUES (${batch.client_id},${segmentName}) ON CONFLICT(client_id,name) DO UPDATE SET name=EXCLUDED.name RETURNING id`;await sql`INSERT INTO company_segments(client_company_id,segment_id,source) VALUES (${cc.id},${segment.id},${batch.source}) ON CONFLICT DO NOTHING`}
-  if(clean(p.icp_status))await sql`INSERT INTO icp_decisions(client_id,company_id,decision,reason_code,reason_text,criteria_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)},'imported_decision',${clean(p.icp_reason)||null},${sql.json({batchKey:batch.external_batch_key})})`;
-  const email=normalizeEmail(clean(p.email));if(email||clean(p.contact_linkedin_url)){await sql`INSERT INTO tam_contacts(client_id,company_id,first_name,last_name,title,email,normalized_email,linkedin_url,email_status,eligibility_status) SELECT ${batch.client_id},${company.id},${clean(p.first_name)||'Unknown'},${clean(p.last_name)},${clean(p.title)},${email||null},${email||null},${clean(p.contact_linkedin_url)||null},${email?'unverified':'missing'},'eligible' WHERE NOT EXISTS(SELECT 1 FROM tam_contacts WHERE client_id=${batch.client_id} AND ((${email||null} IS NOT NULL AND normalized_email=${email||null}) OR (${clean(p.contact_linkedin_url)||null} IS NOT NULL AND linkedin_url=${clean(p.contact_linkedin_url)||null})))`}
-  await sql`UPDATE tam_import_rows SET status='committed',updated_at=NOW() WHERE id=${row.id}`;
- }
- const counts=await refreshCounts(batch.id),[{remaining}]=await sql`SELECT COUNT(*)::int remaining FROM tam_import_rows WHERE batch_id=${batch.id} AND status='staged' AND resolution NOT IN ('invalid','possible_duplicate')`;
- const done=remaining===0;if(done)await sql`UPDATE tam_import_batches SET status='committed',updated_at=NOW() WHERE id=${batch.id}`;
- return {batchId:batch.id,processed:rows.length,remaining,done,counts,resumable:!done};
+ return sql.begin(async tx=>{
+  const [batch]=await tx`SELECT b.*,c.name client_name FROM tam_import_batches b JOIN clients c ON c.id=b.client_id WHERE b.external_batch_key=${batchKey} AND c.name=${clientName} FOR UPDATE`;
+  if(!batch)throw new Error("Import batch not found");
+  const rows=await tx`SELECT * FROM tam_import_rows WHERE batch_id=${batch.id} AND status='staged' AND resolution NOT IN ('invalid','possible_duplicate') ORDER BY id LIMIT ${Math.min(Math.max(limit,1),1000)} FOR UPDATE`;
+  for(const row of rows){
+   const p=nestedJsonObject(row.payload_json),d=domain(p.domain),name=clean(p.company_name)||d,attributes={country:clean(p.country),linkedin_url:clean(p.linkedin_url),provider_id:clean(p.provider_id),last_import_batch:batch.external_batch_key};
+   if(!d)throw new Error(`Refusing to commit row ${row.id}: normalized company domain is empty`);
+   const [company]=row.matched_company_id?await tx`UPDATE companies SET name=CASE WHEN ${name}<>'' THEN ${name} ELSE name END WHERE id=${row.matched_company_id} RETURNING id`:await tx`INSERT INTO companies(name,domain) VALUES (${name},${d}) ON CONFLICT(domain) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
+   const [cc]=await tx`INSERT INTO client_companies(client_id,company_id,icp_status,icp_reason,attributes_json) VALUES (${batch.client_id},${company.id},${clean(p.icp_status)||'unreviewed'},${clean(p.icp_reason)||null},${sql.json(attributes)}) ON CONFLICT(client_id,company_id) DO UPDATE SET icp_status=CASE WHEN EXCLUDED.icp_status<>'unreviewed' THEN EXCLUDED.icp_status ELSE client_companies.icp_status END,icp_reason=COALESCE(EXCLUDED.icp_reason,client_companies.icp_reason),attributes_json=client_companies.attributes_json||EXCLUDED.attributes_json,updated_at=NOW() RETURNING id`;
+   for(const segmentName of (Array.isArray(p.segments)?p.segments:[]).map(clean).filter(Boolean)){const [segment]=await tx`INSERT INTO tam_segments(client_id,name) VALUES (${batch.client_id},${segmentName}) ON CONFLICT(client_id,name) DO UPDATE SET name=EXCLUDED.name RETURNING id`;await tx`INSERT INTO company_segments(client_company_id,segment_id,source) VALUES (${cc.id},${segment.id},${batch.source}) ON CONFLICT DO NOTHING`}
+   if(clean(p.icp_status))await tx`INSERT INTO icp_decisions(client_id,company_id,decision,reason_code,reason_text,criteria_json) SELECT ${batch.client_id},${company.id},${clean(p.icp_status)},'imported_decision',${clean(p.icp_reason)||null},${sql.json({batchKey:batch.external_batch_key})} WHERE NOT EXISTS(SELECT 1 FROM icp_decisions WHERE client_id=${batch.client_id} AND company_id=${company.id} AND reason_code='imported_decision' AND criteria_json->>'batchKey'=${batch.external_batch_key})`;
+   const email=normalizeEmail(clean(p.email)),linkedin=clean(p.contact_linkedin_url);let contactExists=false;
+   if(email&&linkedin)contactExists=Boolean((await tx`SELECT id FROM tam_contacts WHERE client_id=${batch.client_id} AND (normalized_email=${email} OR linkedin_url=${linkedin}) LIMIT 1`)[0]);
+   else if(email)contactExists=Boolean((await tx`SELECT id FROM tam_contacts WHERE client_id=${batch.client_id} AND normalized_email=${email} LIMIT 1`)[0]);
+   else if(linkedin)contactExists=Boolean((await tx`SELECT id FROM tam_contacts WHERE client_id=${batch.client_id} AND linkedin_url=${linkedin} LIMIT 1`)[0]);
+   if((email||linkedin)&&!contactExists)await tx`INSERT INTO tam_contacts(client_id,company_id,first_name,last_name,title,email,normalized_email,linkedin_url,email_status,eligibility_status) VALUES (${batch.client_id},${company.id},${clean(p.first_name)||'Unknown'},${clean(p.last_name)},${clean(p.title)},${email||null},${email||null},${linkedin||null},${email?'unverified':'missing'},'eligible')`;
+   await tx`UPDATE tam_import_rows SET status='committed',updated_at=NOW() WHERE id=${row.id}`;
+  }
+  const resolutionCounts=await tx`SELECT resolution,COUNT(*)::int count FROM tam_import_rows WHERE batch_id=${batch.id} GROUP BY resolution`,countsByResolution=Object.fromEntries(resolutionCounts.map(r=>[r.resolution,r.count]));
+  const [{received,committed}]=await tx`SELECT COUNT(*)::int received,COUNT(*) FILTER(WHERE status='committed')::int committed FROM tam_import_rows WHERE batch_id=${batch.id}`;
+  const counts={received,committed,...countsByResolution};await tx`UPDATE tam_import_batches SET received_count=${received},committed_count=${committed},counts_json=${sql.json(counts)},updated_at=NOW() WHERE id=${batch.id}`;
+  const [{remaining}]=await tx`SELECT COUNT(*)::int remaining FROM tam_import_rows WHERE batch_id=${batch.id} AND status='staged' AND resolution NOT IN ('invalid','possible_duplicate')`;
+  const done=remaining===0;if(done)await tx`UPDATE tam_import_batches SET status='committed',updated_at=NOW() WHERE id=${batch.id}`;
+  return {batchId:batch.id,processed:rows.length,remaining,done,counts,resumable:!done};
+ });
 }
 
 export async function discardImport(batchKey:string,clientName:string){
