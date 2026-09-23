@@ -28,6 +28,17 @@ CAL_WEBHOOK_SECRET=<random secret>
 
 Add `CLOSE_API_KEY`, `SMARTLEAD_API_KEY`, `CAL_API_KEY`, and `SLACK_WEBHOOK_URL` only when their staging flows are ready.
 
+## Client TAM and list building
+
+The List Builder keeps a durable master TAM per client: companies, contacts, source batches, ICP decisions, prior use, verification state, resumable job checkpoints, and exact export membership. It searches stored eligible contacts first and sources only the shortfall. Demo mode never calls enrichment providers or uploads to Smartlead.
+
+Set `TAM_API_KEY` to expose the read-only Claude Code API. Authenticate with `Authorization: Bearer <TAM_API_KEY>` and use:
+
+- `/api/internal/tam` for clients, TAM totals, batches, jobs, funnels and checkpoints
+- `/api/internal/tam?resource=companies&limit=100&offset=0`
+- `/api/internal/tam?resource=contacts&limit=100&offset=0`
+- `/api/internal/tam?resource=job_contacts&job_id=<id>&limit=500&offset=0` for the exact approved/exported records
+
 ## Workflow
 
 1. Smartlead posts a reply to `/api/webhooks/smartlead`.
