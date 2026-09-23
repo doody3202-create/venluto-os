@@ -68,10 +68,18 @@ Preview with `GET /api/internal/tam/import?clientName=Venluto&batchKey=venluto-t
 Commit safe records in resumable chunks with `PATCH /api/internal/tam/import`:
 
 ```json
-{"clientName":"Venluto","batchKey":"venluto-tam-2026-09","limit":500}
+{"action":"commit","confirmation":"COMMIT TAM IMPORT","clientName":"Venluto","batchKey":"venluto-tam-2026-09","limit":500}
 ```
 
 Repeat until `done` is `true`. Possible duplicates and invalid rows remain staged for review and are never silently discarded.
+
+Discard an unwanted staged or safely reversible test batch with `DELETE /api/internal/tam/import`. This refuses to remove committed companies once contacts or prospects depend on them:
+
+```json
+{"action":"discard","confirmation":"DISCARD TAM IMPORT","clientName":"Venluto","batchKey":"probe-shape-001"}
+```
+
+Contact fields are flat: `first_name`, `last_name`, `title`, `email`, and `contact_linkedin_url`. A successful `POST` only stages rows; only the explicit confirmed `PATCH` above can commit them.
 
 ## Workflow
 

@@ -66,3 +66,25 @@ export async function commitImport(batchKey:string,clientName:string,limit=500){
  const done=remaining===0;if(done)await sql`UPDATE tam_import_batches SET status='committed',updated_at=NOW() WHERE id=${batch.id}`;
  return {batchId:batch.id,processed:rows.length,remaining,done,counts,resumable:!done};
 }
+
+export async function discardImport(batchKey:string,clientName:string){
+ await ensureDatabase();
+ return sql.begin(async tx=>{
+  const [batch]=await tx`SELECT b.*,c.name client_name FROM tam_import_batches b JOIN clients c ON c.id=b.client_id WHERE b.external_batch_key=${batchKey} AND c.name=${clientName} FOR UPDATE`;
+  if(!batch)throw new Error("Import batch not found");
+  const created=await tx`SELECT DISTINCT c.id FROM tam_import_rows r JOIN companies c ON c.domain=r.payload_json->>'domain' WHERE r.batch_id=${batch.id} AND r.status='committed' AND r.resolution='new'`;
+  const ids=created.map(row=>row.id as number);
+  if(ids.length){
+   const [{count:contacts}]=await tx`SELECT COUNT(*)::int count FROM tam_contacts WHERE client_id=${batch.client_id} AND company_id=ANY(${ids})`;
+   const [{count:prospects}]=await tx`SELECT COUNT(*)::int count FROM prospects WHERE company_id=ANY(${ids})`;
+   if(contacts||prospects)throw new Error("Cannot discard: committed companies now have contacts or prospects. Review them manually.");
+   await tx`DELETE FROM icp_decisions WHERE client_id=${batch.client_id} AND company_id=ANY(${ids}) AND criteria_json->>'batchKey'=${batchKey}`;
+   await tx`DELETE FROM company_segments WHERE client_company_id IN (SELECT id FROM client_companies WHERE client_id=${batch.client_id} AND company_id=ANY(${ids}))`;
+   await tx`DELETE FROM client_companies WHERE client_id=${batch.client_id} AND company_id=ANY(${ids}) AND attributes_json->>'last_import_batch'=${batchKey}`;
+  }
+  await tx`DELETE FROM tam_import_rows WHERE batch_id=${batch.id}`;
+  await tx`DELETE FROM tam_import_batches WHERE id=${batch.id}`;
+  if(ids.length)await tx`DELETE FROM companies WHERE id=ANY(${ids}) AND NOT EXISTS(SELECT 1 FROM client_companies cc WHERE cc.company_id=companies.id) AND NOT EXISTS(SELECT 1 FROM prospects p WHERE p.company_id=companies.id) AND NOT EXISTS(SELECT 1 FROM tam_contacts tc WHERE tc.company_id=companies.id)`;
+  return {ok:true,batchKey,discardedRows:batch.received_count,removedNewCompanies:ids.length};
+ });
+}
