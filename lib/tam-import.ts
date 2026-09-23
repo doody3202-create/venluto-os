@@ -7,7 +7,11 @@ const domain=(value:unknown)=>String(value??"").trim().toLowerCase().replace(/^h
 const clean=(value:unknown)=>String(value??"").trim();
 const jsonObject=(value:unknown):TamImportRecord=>{if(value&&typeof value==="object")return value as TamImportRecord;if(typeof value==="string"){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==="object"?parsed as TamImportRecord:{}}catch{return {}}}return {}};
 const nestedJsonObject=(value:unknown):TamImportRecord=>{let current=value;for(let i=0;i<2;i++){const parsed=jsonObject(current);if(Object.keys(parsed).length||typeof current!=="string")return parsed;try{current=JSON.parse(String(current))}catch{return {}}}return jsonObject(current)};
-const rowKey=(record:TamImportRecord,index:number)=>clean(record.provider_id)||domain(record.domain)||clean(record.linkedin_url)||createHash("sha256").update(JSON.stringify(record)+index).digest("hex").slice(0,24);
+const rowKey=(record:TamImportRecord,index:number)=>{
+ const companyIdentity=clean(record.provider_id)||domain(record.domain)||clean(record.linkedin_url),contactIdentity=normalizeEmail(clean(record.email))||clean(record.contact_linkedin_url);
+ if(companyIdentity&&contactIdentity)return createHash("sha256").update(`${companyIdentity}|${contactIdentity}`).digest("hex").slice(0,32);
+ return companyIdentity||contactIdentity||createHash("sha256").update(JSON.stringify(record)+index).digest("hex").slice(0,32);
+};
 
 async function refreshCounts(batchId:number){
  const rows=await sql`SELECT resolution,COUNT(*)::int count FROM tam_import_rows WHERE batch_id=${batchId} GROUP BY resolution`;

@@ -43,6 +43,8 @@ Set `TAM_API_KEY` to expose the read-only Claude Code API. Authenticate with `Au
 
 Send up to 1,000 records per request to `POST /api/internal/tam/import` using the same `Authorization: Bearer <TAM_API_KEY>` header. Reuse one stable `batchKey` for every chunk and retry; rows are idempotent within that batch.
 
+Row identity combines the company identity with contact email or contact LinkedIn when a contact is present. This preserves multiple contacts at one company while making an identical retry update the staged row instead of duplicating it.
+
 ```json
 {
   "clientName": "Venluto",
