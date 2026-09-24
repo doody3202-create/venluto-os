@@ -13,6 +13,20 @@ const dates = (range: RangeKey) => {
   start.setUTCDate(start.getUTCDate() - (days - 1));
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 };
+const windows = (range: RangeKey) => {
+  if (range === "all") return [];
+  const { start, end } = dates(range), result: Array<{ start: string; end: string }> = [];
+  let cursor = new Date(`${start}T00:00:00Z`), last = new Date(`${end}T00:00:00Z`);
+  while (cursor <= last) {
+    const windowEnd = new Date(cursor);
+    windowEnd.setUTCDate(windowEnd.getUTCDate() + 29);
+    if (windowEnd > last) windowEnd.setTime(last.getTime());
+    result.push({ start: cursor.toISOString().slice(0, 10), end: windowEnd.toISOString().slice(0, 10) });
+    cursor = new Date(windowEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return result;
+};
 
 export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d") {
   const apiKey = process.env.SMARTLEAD_API_KEY;
@@ -34,19 +48,34 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
 
   let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
-  const window = dates(range);
+  const window = dates(range), dateWindows = windows(range);
   for (let index = 0; index < campaigns.length; index += 12) {
     const results = await Promise.all(campaigns.slice(index, index + 12).map(async (campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
       if (!externalId) return null;
-      const endpoint = range === "all" ? `campaigns/${externalId}/analytics` : `campaigns/${externalId}/top-level-analytics-by-date?start_date=${window.start}&end_date=${window.end}`;
       try {
-        const response = await fetch(`https://server.smartlead.ai/api/v1/${endpoint}${endpoint.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
-        if (!response.ok) {
-          console.warn("[Smartlead sync] analytics rejected; preserving prior metrics", { campaignId: externalId, status: response.status, range });
-          return null;
+        if (range === "all") {
+          const response = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+          if (!response.ok) return null;
+          const stats = await response.json() as Json;
+          return { campaign, externalId, stats: { ...stats, positive_reply_count: 0 } };
         }
-        return { campaign, externalId, stats: await response.json() as Json };
+        const parts = await Promise.all(dateWindows.map(async (dateWindow) => {
+          const suffix = `start_date=${dateWindow.start}&end_date=${dateWindow.end}&api_key=${encodeURIComponent(apiKey)}`;
+          const [analyticsResponse, positiveResponse] = await Promise.all([
+            fetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?${suffix}`, { cache: "no-store" }),
+            fetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/top-level-analytics-by-date?${suffix}`, { cache: "no-store" }),
+          ]);
+          if (!analyticsResponse.ok || !positiveResponse.ok) throw new Error(`dated analytics rejected (${analyticsResponse.status}/${positiveResponse.status})`);
+          return { analytics: await analyticsResponse.json() as Json, positive: await positiveResponse.json() as Json };
+        }));
+        const stats: Json = {};
+        for (const part of parts) {
+          for (const key of ["sent_count", "unique_sent_count", "reply_count", "total_reply_count", "non_ooo_reply_count"]) stats[key] = n(stats[key]) + n(part.analytics[key]);
+          stats.positive_reply_count = n(stats.positive_reply_count) + n(part.positive.positive_reply_count);
+          stats.total_count = Math.max(n(stats.total_count), n(part.analytics.total_count));
+        }
+        return { campaign, externalId, stats };
       } catch (error) {
         console.warn("[Smartlead sync] analytics failed; preserving prior metrics", { campaignId: externalId, range, error: error instanceof Error ? error.message : String(error) });
         return null;
@@ -55,7 +84,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     for (const result of results) {
       if (!result) continue;
       const { campaign, externalId, stats } = result;
-      const contacted = pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted", "sent_count"]);
+      const contacted = pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
       const values = {
         people_contacted: contacted,
         emails_sent: pick(stats, ["sent_count", "emails_sent", "total_sent"]),
@@ -76,6 +105,17 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
       totals.opportunities += values.positive_replies;
       synced++;
     }
+  }
+
+  if (range === "all") {
+    const [allTime] = await sql`
+      SELECT COUNT(DISTINCT r.id)::int opportunities
+      FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id
+      WHERE cc.client_id=${clientId}
+        AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
+    `;
+    totals.opportunities = Number(allTime?.opportunities ?? 0);
+    totals.positiveReplies = totals.opportunities;
   }
 
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(totals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
