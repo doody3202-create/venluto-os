@@ -22,6 +22,7 @@ const paragraphs=(body:string)=>body.replace(/\r/g,"").replace(/([.!?])\s+(?=[A-
 export default function Dashboard(){
  const [data,setData]=useState<Data>(EMPTY),[tam,setTam]=useState<TamData|null>(null),[analytics,setAnalytics]=useState<AnalyticsData|null>(null),[range,setRange]=useState('30d'),[clients,setClients]=useState<ClientWorkspace[]>([]),[clientId,setClientId]=useState<number>(0),[newCredential,setNewCredential]=useState<{name:string;apiKey:string}|null>(null),[tab,setTab]=useState("dashboard"),[selected,setSelected]=useState<number|null>(null),[loading,setLoading]=useState(true),[toast,setToast]=useState("");
  const smartleadSyncedFor=useRef<string>("");
+ const currentAnalyticsView=useRef<{clientId:number;range:string}>({clientId:0,range:"30d"});
  const load=useCallback(async()=>{const r=await fetch("/api/dashboard");if(r.ok)setData(await r.json());setLoading(false)},[]);useEffect(()=>{load()},[load]);
  useEffect(()=>{(async()=>{const r=await fetch('/api/clients');if(!r.ok)return;const result=await r.json() as{clients:ClientWorkspace[]};setClients(result.clients);const remembered=Number(localStorage.getItem('venlutoClientId')??0),chosen=result.clients.find(c=>c.id===remembered)?.id??result.clients[0]?.id??0;setClientId(chosen)})()},[]);
  const overdue=useMemo(()=>data.prospects.filter(p=>p.deadline_at&&new Date(p.deadline_at)<new Date()&&!['qualified','not_interested','do_not_contact'].includes(p.status)),[data]);
@@ -35,7 +36,8 @@ export default function Dashboard(){
  async function createTask(title:string){const r=await fetch('/api/dashboard',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title})});if(r.ok){setToast('Task created');await load()}else setToast('Could not create task')}
  async function toggleTask(id:number,status:string){await fetch('/api/dashboard',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({taskId:id,taskStatus:status==='done'?'open':'done'})});await load()}
  async function loadTam(id=clientId){if(!id)return;setLoading(true);const r=await fetch(`/api/lists?clientId=${id}`);if(r.ok)setTam(await r.json());setLoading(false)}
- async function loadAnalytics(id=clientId,nextRange=range){if(!id)return;const r=await fetch(`/api/analytics?clientId=${id}&range=${nextRange}`);if(r.ok)setAnalytics(await r.json())}
+ useEffect(()=>{currentAnalyticsView.current={clientId,range}},[clientId,range]);
+ async function loadAnalytics(id=clientId,nextRange=range){if(!id)return;const r=await fetch(`/api/analytics?clientId=${id}&range=${nextRange}`,{cache:"no-store"});if(r.ok){const next=await r.json();if(currentAnalyticsView.current.clientId===id&&currentAnalyticsView.current.range===nextRange)setAnalytics(next)}}
  useEffect(()=>{if(clientId)loadAnalytics(clientId,range)},[clientId,range]);
  useEffect(()=>{const client=clients.find(c=>c.id===clientId),syncKey=`${clientId}:${range}`;if(!client||client.name.toLowerCase()!=='venluto'||smartleadSyncedFor.current===syncKey)return;smartleadSyncedFor.current=syncKey;const timer=window.setTimeout(async()=>{const response=await fetch(`/api/integrations/smartlead/sync?range=${range}`,{method:'POST'});if(response.ok)await loadAnalytics(clientId,range)},1200);return()=>window.clearTimeout(timer)},[clientId,clients,range]);
  async function openLists(){setTab('lists');if(!tam||tam.client.id!==clientId)await loadTam()}

@@ -1,29 +1,84 @@
-import {sql} from "./db";
-import {syncSmartleadOpportunityReplies} from "./smartlead-replies";
+import { sql } from "./db";
+import { syncSmartleadOpportunityReplies } from "./smartlead-replies";
 
-type RangeKey="7d"|"30d"|"60d"|"all";
-const numberFrom=(value:unknown)=>Number(value??0)||0;
-const pickNumber=(source:Record<string,unknown>,keys:string[])=>{for(const key of keys)if(source[key]!==undefined&&source[key]!==null)return numberFrom(source[key]);return 0};
-const unwrap=(payload:unknown)=>{const root=(payload&&typeof payload==='object'?payload:{}) as Record<string,unknown>,data=root.data??root;if(Array.isArray(data))return data.reduce<Record<string,unknown>>((total,row)=>{if(!row||typeof row!=='object')return total;for(const[key,value]of Object.entries(row)){if(typeof value==='number')total[key]=numberFrom(total[key])+value;else if(value&&typeof value==='object'&&!Array.isArray(value)){const nested=(total[key]&&typeof total[key]==='object'?total[key]:{}) as Record<string,unknown>;for(const[nk,nv]of Object.entries(value))if(typeof nv==='number')nested[nk]=numberFrom(nested[nk])+nv;total[key]=nested}}return total},{});return data as Record<string,unknown>};
-const positiveCategory=(name:unknown)=>['interested','meeting request','information request'].includes(String(name??'').trim().toLowerCase());
-const rangeDates=(range:RangeKey)=>{const days=range==='7d'?7:range==='60d'?60:30,end=new Date(),start=new Date(end);start.setUTCDate(start.getUTCDate()-(days-1));return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10)}};
-const rangeWindows=(range:RangeKey)=>{if(range==='all')return[];const {start,end}=rangeDates(range),windows:Array<{start:string;end:string}>=[];let cursor=new Date(`${start}T00:00:00Z`),last=new Date(`${end}T00:00:00Z`);while(cursor<=last){let windowEnd=new Date(cursor);windowEnd.setUTCDate(windowEnd.getUTCDate()+29);if(windowEnd>last)windowEnd=last;windows.push({start:cursor.toISOString().slice(0,10),end:windowEnd.toISOString().slice(0,10)});cursor=new Date(windowEnd);cursor.setUTCDate(cursor.getUTCDate()+1)}return windows};
-const mergeStats=(rows:Record<string,unknown>[])=>rows.reduce<Record<string,unknown>>((sum,row)=>{for(const[key,value]of Object.entries(row))if(value!==null&&value!==''&&!Number.isNaN(Number(value)))sum[key]=numberFrom(sum[key])+numberFrom(value);return sum},{});
+type RangeKey = "7d" | "30d" | "60d" | "all";
+type Json = Record<string, unknown>;
+const n = (value: unknown) => Number(value ?? 0) || 0;
+const pick = (row: Json, keys: string[]) => {
+  for (const key of keys) if (row[key] !== undefined && row[key] !== null) return n(row[key]);
+  return 0;
+};
+const dates = (range: RangeKey) => {
+  const days = range === "7d" ? 7 : range === "60d" ? 60 : 30;
+  const end = new Date(), start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+};
 
-export async function syncVenlutoSmartleadCampaigns(force=false,range:RangeKey='30d'){
- const apiKey=process.env.SMARTLEAD_API_KEY;if(!apiKey){console.warn('[Smartlead sync] skipped: SMARTLEAD_API_KEY is not configured');return{ok:false,skipped:true,reason:'SMARTLEAD_API_KEY is not configured'}}
- const freshnessKey=`synced_at_${range}`,latest=await sql`SELECT MAX((metadata_json->>${freshnessKey})::timestamptz) synced_at FROM campaigns WHERE provider='smartlead' AND LOWER(name) LIKE '%venluto%'`;if(!force&&latest[0]?.synced_at&&Date.now()-new Date(latest[0].synced_at as string).getTime()<15*60*1000)return{ok:true,skipped:true,reason:'fresh'};
- const response=await fetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`,{cache:'no-store'});if(!response.ok)throw new Error(`Smartlead campaign discovery failed (${response.status})`);
- const payload=await response.json() as unknown,raw=Array.isArray(payload)?payload:(payload as{campaigns?:unknown[];data?:unknown[]}).campaigns??(payload as{data?:unknown[]}).data??[],campaigns=(raw as Array<Record<string,unknown>>).filter(c=>String(c.name??'').toLowerCase().includes('venluto'));console.info('[Smartlead sync] campaigns discovered',{all:(raw as unknown[]).length,venluto:campaigns.length,range});
- const [client]=await sql`SELECT id FROM clients WHERE LOWER(name)='venluto' LIMIT 1`,[owner]=await sql`SELECT id FROM owners WHERE LOWER(email)='vlad@venlutogroup.com' ORDER BY id LIMIT 1`;if(!client)return{ok:false,skipped:true,reason:'Venluto workspace is missing'};const clientId=Number(client.id),ownerId=owner?Number(owner.id):null;let synced=0;
- const windows=rangeWindows(range);
- for(let index=0;index<campaigns.length;index+=12){const slice=campaigns.slice(index,index+12),results=await Promise.all(slice.map(async item=>{const externalId=String(item.id??item.campaign_id??'');if(!externalId)return{item,externalId,stats:{}};try{const endpoints=range==='all'?[`campaigns/${externalId}/analytics`]:windows.map(w=>`campaigns/${externalId}/analytics-by-date?start_date=${w.start}&end_date=${w.end}`),responses=await Promise.all(endpoints.map(endpoint=>fetch(`https://server.smartlead.ai/api/v1/${endpoint}${endpoint.includes('?')?'&':'?'}api_key=${encodeURIComponent(apiKey)}`,{cache:'no-store'}))),good=responses.filter(r=>r.ok),parts=await Promise.all(good.map(async r=>unwrap(await r.json())));if(good.length!==responses.length)console.warn('[Smartlead sync] campaign analytics partially rejected',{campaignId:externalId,statuses:responses.map(r=>r.status),range});return{item,externalId,stats:range==='all'?(parts[0]??{}):mergeStats(parts)}}catch(error){console.warn('[Smartlead sync] campaign analytics failed',{campaignId:externalId,error:error instanceof Error?error.message:String(error),range})}return{item,externalId,stats:{}}}));for(const{item,externalId,stats}of results){if(!externalId)continue;const merged={...item,...stats},leadStats=(merged.campaign_lead_stats&&typeof merged.campaign_lead_stats==='object'?merged.campaign_lead_stats:{})as Record<string,unknown>,positive=pickNumber(leadStats,['interested']),values={people_contacted:pickNumber(merged,['unique_sent_count','people_contacted','unique_leads_contacted','contacted_count']),emails_sent:pickNumber(merged,['sent_count','emails_sent','total_sent']),uncontacted_leads:pickNumber(leadStats,['notStarted','not_started']),replies:pickNumber(merged,['reply_count','replies','total_replies']),positive_replies:positive||pickNumber(merged,['positive_reply_count','positive_replies']),opportunities:positive||pickNumber(merged,['opportunity_count','opportunities']),total_leads:pickNumber(leadStats,['total'])||pickNumber(merged,['total_count'])},now=new Date().toISOString(),metrics={...values,...Object.fromEntries(Object.entries(values).map(([key,value])=>[`${key}_${range}`,value])),synced_at:now,[`synced_at_${range}`]:now,status:String(item.status??item.state??'unknown')},[row]=await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('smartlead',${externalId},${String(item.name??`Smartlead ${externalId}`)},${sql.json(metrics)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},'name:Venluto') ON CONFLICT DO NOTHING`;synced++}}
- let rangeOpportunities=0;if(range==='all')rangeOpportunities=campaigns.reduce((sum,c)=>sum+pickNumber(c,['opportunity_count','opportunities']),0);else for(const window of windows){const ids=campaigns.map(c=>String(c.id??c.campaign_id??'')).filter(Boolean).join(','),url=`https://server.smartlead.ai/api/v1/analytics/day-wise-positive-reply-stats?api_key=${encodeURIComponent(apiKey)}&start_date=${window.start}&end_date=${window.end}&timezone=${encodeURIComponent('Europe/Bucharest')}&campaign_ids=${encodeURIComponent(ids)}`;try{const res=await fetch(url,{cache:'no-store'});if(res.ok){const body=await res.json() as Record<string,unknown>,data=(body.data&&typeof body.data==='object'?body.data:{}) as Record<string,unknown>,rows=(data.day_wise_stats??body.day_wise_stats??[]) as Array<Record<string,unknown>>;rangeOpportunities+=rows.reduce((sum,row)=>sum+pickNumber(row,['positive_replied','positive_replies','count']),0)}else console.warn('[Smartlead sync] positive reply stats rejected',{status:res.status,range,window})}catch(error){console.warn('[Smartlead sync] positive reply stats failed',{range,window,error:error instanceof Error?error.message:String(error)})}}
- await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json({opportunities:rangeOpportunities})},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
- const campaignIds=campaigns.map(c=>Number(c.id??c.campaign_id)).filter(Boolean),groups=campaignIds.map(id=>[id]),replyCounts:number[]=[];
- for(let batch=0;batch<groups.length;batch+=8)replyCounts.push(...await Promise.all(groups.slice(batch,batch+8).map(async group=>{let offset=0,total=1,count=0;while(offset<total&&offset<5000){const inboxResponse=await fetch(`https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=false`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({offset,limit:100,filters:{emailStatus:'Replied',campaignId:group[0]},sortBy:'REPLY_TIME_DESC'}),cache:'no-store'});if(!inboxResponse.ok){console.warn('[Smartlead sync] inbox request rejected',{campaignId:group[0],status:inboxResponse.status});break}const inbox=await inboxResponse.json()as{messages?:Array<Record<string,unknown>>;total_count?:number},messages=inbox.messages??[];total=Number(inbox.total_count??messages.length);for(const message of messages){const category=(message.category??{})as Record<string,unknown>,categoryName=String(category.name??'').trim();if(!positiveCategory(categoryName))continue;const lead=(message.lead??{})as Record<string,unknown>,campaign=(message.campaign??{})as Record<string,unknown>,last=(message.last_message??{})as Record<string,unknown>,email=String(lead.email??last.sent_from??'').trim().toLowerCase();if(!email)continue;const domain=email.split('@')[1]??'unknown.local',rawCompany=lead.company_name??lead.company,companyName=typeof rawCompany==='string'&&rawCompany.trim()?rawCompany.trim():domain,[companyRow]=await sql`INSERT INTO companies(name,domain) VALUES (${companyName},${domain}) ON CONFLICT(domain) DO UPDATE SET name=CASE WHEN EXCLUDED.name<>EXCLUDED.domain THEN EXCLUDED.name WHEN companies.name IN ('','SameCompany','[object Object]') THEN EXCLUDED.name ELSE companies.name END RETURNING id`,[campaignRow]=await sql`SELECT id FROM campaigns WHERE provider='smartlead' AND external_id=${String(campaign.id??group[0])}`;if(!campaignRow)continue;const[prospect]=await sql`INSERT INTO prospects(first_name,last_name,email,normalized_email,source,status,owner_id,company_id,next_action,deadline_at) VALUES (${String(lead.first_name??'')},${String(lead.last_name??'')},${email},${email},'smartlead','action_due',${ownerId},${companyRow.id},'Reply to opportunity',NOW()+INTERVAL '5 minutes') ON CONFLICT(normalized_email) DO UPDATE SET first_name=CASE WHEN EXCLUDED.first_name<>'' THEN EXCLUDED.first_name ELSE prospects.first_name END,last_name=CASE WHEN EXCLUDED.last_name<>'' THEN EXCLUDED.last_name ELSE prospects.last_name END,company_id=EXCLUDED.company_id,owner_id=COALESCE(prospects.owner_id,EXCLUDED.owner_id),updated_at=NOW() RETURNING id`,replyId=String(last.id??message.id??`${campaign.id??group[0]}:${email}:${last.received_at??''}`);await sql`INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at) VALUES (${prospect.id},${campaignRow.id},${replyId},${String(last.body??'')},'positive',${categoryName},${String(last.received_at??new Date().toISOString())}) ON CONFLICT(provider_reply_id) DO UPDATE SET body=EXCLUDED.body,reply_category=EXCLUDED.reply_category,received_at=EXCLUDED.received_at`;count++}if(!messages.length)break;offset+=messages.length}return count})));
- const opportunityRepliesSynced=await syncSmartleadOpportunityReplies({apiKey,campaignIds,clientId,ownerId});
- const exactOpportunities=range==='all'?Number((await sql`SELECT COUNT(*)::int value FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id WHERE cc.client_id=${clientId} AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')`)[0]?.value??0):Number((await sql`SELECT COUNT(*)::int value FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id WHERE cc.client_id=${clientId} AND r.received_at>=${rangeDates(range).start}::date AND r.received_at<(${rangeDates(range).end}::date+INTERVAL '1 day') AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')`)[0]?.value??0);
- await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json({opportunities:exactOpportunities})},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
- return{ok:true,synced,repliesSynced:opportunityRepliesSynced||replyCounts.reduce((a,b)=>a+b,0),opportunities:exactOpportunities,range};
+export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d") {
+  const apiKey = process.env.SMARTLEAD_API_KEY;
+  if (!apiKey) return { ok: false, skipped: true, reason: "SMARTLEAD_API_KEY is not configured" };
+  const freshnessKey = `synced_at_${range}`;
+  const [fresh] = await sql`SELECT MAX((metadata_json->>${freshnessKey})::timestamptz) synced_at FROM campaigns WHERE provider='smartlead' AND LOWER(name) LIKE '%venluto%'`;
+  if (!force && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) return { ok: true, skipped: true, reason: "fresh" };
+
+  const discovery = await fetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+  if (!discovery.ok) throw new Error(`Smartlead campaign discovery failed (${discovery.status})`);
+  const payload = await discovery.json() as Json | Json[];
+  const raw = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Json[];
+  const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes("venluto"));
+  console.info("[Smartlead sync] campaigns discovered", { all: raw.length, venluto: campaigns.length, range });
+
+  const [client] = await sql`SELECT id FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
+  const [owner] = await sql`SELECT id FROM owners WHERE LOWER(email)='vlad@venlutogroup.com' ORDER BY id LIMIT 1`;
+  if (!client) return { ok: false, skipped: true, reason: "Venluto workspace is missing" };
+  const clientId = Number(client.id), ownerId = owner ? Number(owner.id) : null;
+  const campaignIds = campaigns.map((campaign) => Number(campaign.id ?? campaign.campaign_id)).filter(Boolean);
+  const repliesSynced = await syncSmartleadOpportunityReplies({ apiKey, campaignIds, clientId, ownerId });
+
+  let synced = 0;
+  const window = dates(range);
+  for (let index = 0; index < campaigns.length; index += 12) {
+    const results = await Promise.all(campaigns.slice(index, index + 12).map(async (campaign) => {
+      const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
+      if (!externalId) return null;
+      const endpoint = range === "all" ? `campaigns/${externalId}/analytics` : `campaigns/${externalId}/top-level-analytics-by-date?start_date=${window.start}&end_date=${window.end}`;
+      try {
+        const response = await fetch(`https://server.smartlead.ai/api/v1/${endpoint}${endpoint.includes("?") ? "&" : "?"}api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+        if (!response.ok) {
+          console.warn("[Smartlead sync] analytics rejected; preserving prior metrics", { campaignId: externalId, status: response.status, range });
+          return null;
+        }
+        return { campaign, externalId, stats: await response.json() as Json };
+      } catch (error) {
+        console.warn("[Smartlead sync] analytics failed; preserving prior metrics", { campaignId: externalId, range, error: error instanceof Error ? error.message : String(error) });
+        return null;
+      }
+    }));
+    for (const result of results) {
+      if (!result) continue;
+      const { campaign, externalId, stats } = result;
+      const contacted = pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted", "sent_count"]);
+      const values = {
+        people_contacted: contacted,
+        emails_sent: pick(stats, ["sent_count", "emails_sent", "total_sent"]),
+        uncontacted_leads: Math.max(0, pick(stats, ["total_count"]) - contacted),
+        replies: pick(stats, ["reply_count", "replies", "total_replies"]),
+        positive_replies: pick(stats, ["positive_reply_count", "positive_replies"]),
+        total_leads: pick(stats, ["total_count"]),
+      };
+      const now = new Date().toISOString();
+      const metadata = { ...values, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}_${range}`, value])), synced_at: now, [freshnessKey]: now, status: String(campaign.status ?? campaign.state ?? "unknown") };
+      const [row] = await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('smartlead',${externalId},${String(campaign.name ?? `Smartlead ${externalId}`)},${sql.json(metadata)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;
+      await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},'name:Venluto') ON CONFLICT DO NOTHING`;
+      synced++;
+    }
+  }
+
+  const [count] = range === "all"
+    ? await sql`SELECT COUNT(DISTINCT r.id)::int value FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id WHERE cc.client_id=${clientId} AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')`
+    : await sql`SELECT COUNT(DISTINCT r.id)::int value FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id WHERE cc.client_id=${clientId} AND r.received_at>=${window.start}::date AND r.received_at<(${window.end}::date+INTERVAL '1 day') AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')`;
+  const opportunities = Number(count?.value ?? 0);
+  await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json({ opportunities })},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
+  return { ok: true, synced, repliesSynced, opportunities, range };
 }
