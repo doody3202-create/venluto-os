@@ -7,6 +7,17 @@ const pick = (row: Json, keys: string[]) => {
   for (const key of keys) if (row[key] !== undefined && row[key] !== null) return n(row[key]);
   return 0;
 };
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const smartleadFetch = async (url: string) => {
+  let response: Response | null = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    response = await fetch(url, { cache: "no-store" });
+    if (response.ok || response.status !== 429) return response;
+    const retryAfter = Number(response.headers.get("retry-after") ?? 0);
+    await wait(retryAfter > 0 ? retryAfter * 1000 : 750 * 2 ** attempt);
+  }
+  return response!;
+};
 const dates = (range: RangeKey) => {
   const days = range === "7d" ? 7 : range === "60d" ? 60 : 30;
   const end = new Date(), start = new Date(end);
@@ -35,7 +46,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   const [fresh] = await sql`SELECT MAX((metadata_json->>${freshnessKey})::timestamptz) synced_at FROM campaigns WHERE provider='smartlead' AND LOWER(name) LIKE '%venluto%'`;
   if (!force && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) return { ok: true, skipped: true, reason: "fresh" };
 
-  const discovery = await fetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+  const discovery = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`);
   if (!discovery.ok) throw new Error(`Smartlead campaign discovery failed (${discovery.status})`);
   const payload = await discovery.json() as Json | Json[];
   const raw = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Json[];
@@ -49,22 +60,23 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
   const window = dates(range), dateWindows = windows(range);
-  for (let index = 0; index < campaigns.length; index += 12) {
-    const results = await Promise.all(campaigns.slice(index, index + 12).map(async (campaign) => {
+  const failedCampaigns: string[] = [];
+  for (let index = 0; index < campaigns.length; index += 4) {
+    const results = await Promise.all(campaigns.slice(index, index + 4).map(async (campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
       if (!externalId) return null;
       try {
         if (range === "all") {
-          const response = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
-          if (!response.ok) return null;
+          const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
+          if (!response.ok) throw new Error(`all-time analytics rejected (${response.status})`);
           const stats = await response.json() as Json;
           return { campaign, externalId, stats: { ...stats, positive_reply_count: 0 } };
         }
         const parts = await Promise.all(dateWindows.map(async (dateWindow) => {
           const suffix = `start_date=${dateWindow.start}&end_date=${dateWindow.end}&api_key=${encodeURIComponent(apiKey)}`;
           const [analyticsResponse, positiveResponse] = await Promise.all([
-            fetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?${suffix}`, { cache: "no-store" }),
-            fetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/top-level-analytics-by-date?${suffix}`, { cache: "no-store" }),
+            smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?${suffix}`),
+            smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/top-level-analytics-by-date?${suffix}`),
           ]);
           if (!analyticsResponse.ok || !positiveResponse.ok) throw new Error(`dated analytics rejected (${analyticsResponse.status}/${positiveResponse.status})`);
           return { analytics: await analyticsResponse.json() as Json, positive: await positiveResponse.json() as Json };
@@ -78,6 +90,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
         return { campaign, externalId, stats };
       } catch (error) {
         console.warn("[Smartlead sync] analytics failed; preserving prior metrics", { campaignId: externalId, range, error: error instanceof Error ? error.message : String(error) });
+        failedCampaigns.push(externalId);
         return null;
       }
     }));
@@ -105,6 +118,13 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
       totals.opportunities += values.positive_replies;
       synced++;
     }
+  }
+
+  if (failedCampaigns.length || synced !== campaigns.length) {
+    console.error("[Smartlead sync] incomplete range rejected; previous complete snapshot preserved", {
+      range, expected: campaigns.length, synced, failedCampaigns,
+    });
+    throw new Error(`Smartlead range incomplete: ${synced}/${campaigns.length} campaigns. Previous complete snapshot preserved.`);
   }
 
   if (range === "all") {
