@@ -114,7 +114,7 @@ export async function GET(request: Request) {
     }
   }
   const inbox = await sql`
-    SELECT r.id,r.body,r.sentiment,r.reply_category,r.received_at,p.first_name,p.last_name,p.email,c.name company_name,ca.name campaign_name
+    SELECT r.id,r.body,r.sentiment,r.reply_category,r.received_at,p.first_name,p.last_name,p.email,c.name company_name,c.domain company_domain,ca.name campaign_name
     FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
     JOIN replies r ON r.campaign_id=ca.id AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
     JOIN prospects p ON p.id=r.prospect_id LEFT JOIN companies c ON c.id=p.company_id
