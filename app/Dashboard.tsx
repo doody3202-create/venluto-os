@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 type Prospect={id:number;first_name:string;last_name:string;email:string;title:string;source:string;status:string;owner_id:number|null;owner_name:string|null;owner_initials:string|null;company_name:string|null;next_action:string|null;deadline_at:string|null;close_url:string|null;reply_count:number;meeting_count:number};
 type Reply={id:number;prospect_id:number;body:string;received_at:string;first_name:string;last_name:string;title:string;deadline_at:string;next_action:string;close_url:string|null;owner_name:string|null;owner_initials:string|null;company_name:string;campaign_name:string};
 type Meeting={id:number;prospect_id:number;title:string;starts_at:string;status:string;first_name:string;last_name:string;company_name:string;owner_name:string;booking_url:string|null};
@@ -20,6 +20,7 @@ const preview=(body:string)=>{const cleaned=body.replace(/\[[^\]]+\]/g,"").repla
 const paragraphs=(body:string)=>body.replace(/\r/g,"").replace(/([.!?])\s+(?=[A-Z])/g,"$1\n\n").replace(/\s+(?=(If your request|For anything else|Otherwise,|All the best|Best regards|Kind regards|Please read our privacy|CPL One Cambridge|St Albans))/gi,"\n\n").split(/\n\s*\n/).map(part=>part.replace(/\s+/g," ").trim()).filter(Boolean);
 export default function Dashboard(){
  const [data,setData]=useState<Data>(EMPTY),[tam,setTam]=useState<TamData|null>(null),[analytics,setAnalytics]=useState<AnalyticsData|null>(null),[range,setRange]=useState('30d'),[clients,setClients]=useState<ClientWorkspace[]>([]),[clientId,setClientId]=useState<number>(0),[newCredential,setNewCredential]=useState<{name:string;apiKey:string}|null>(null),[tab,setTab]=useState("dashboard"),[selected,setSelected]=useState<number|null>(null),[loading,setLoading]=useState(true),[toast,setToast]=useState("");
+ const smartleadSyncedFor=useRef<number>(0);
  const load=useCallback(async()=>{const r=await fetch("/api/dashboard");if(r.ok)setData(await r.json());setLoading(false)},[]);useEffect(()=>{load()},[load]);
  useEffect(()=>{(async()=>{const r=await fetch('/api/clients');if(!r.ok)return;const result=await r.json() as{clients:ClientWorkspace[]};setClients(result.clients);const remembered=Number(localStorage.getItem('venlutoClientId')??0),chosen=result.clients.find(c=>c.id===remembered)?.id??result.clients[0]?.id??0;setClientId(chosen)})()},[]);
  const overdue=useMemo(()=>data.prospects.filter(p=>p.deadline_at&&new Date(p.deadline_at)<new Date()&&!['qualified','not_interested','do_not_contact'].includes(p.status)),[data]);
@@ -31,6 +32,7 @@ export default function Dashboard(){
  async function loadTam(id=clientId){if(!id)return;setLoading(true);const r=await fetch(`/api/lists?clientId=${id}`);if(r.ok)setTam(await r.json());setLoading(false)}
  async function loadAnalytics(id=clientId,nextRange=range){if(!id)return;const r=await fetch(`/api/analytics?clientId=${id}&range=${nextRange}`);if(r.ok)setAnalytics(await r.json())}
  useEffect(()=>{if(clientId)loadAnalytics(clientId,range)},[clientId,range]);
+ useEffect(()=>{const client=clients.find(c=>c.id===clientId);if(!client||client.name.toLowerCase()!=='venluto'||smartleadSyncedFor.current===clientId)return;smartleadSyncedFor.current=clientId;const timer=window.setTimeout(async()=>{const response=await fetch('/api/integrations/smartlead/sync',{method:'POST'});if(response.ok)await loadAnalytics(clientId,range)},1200);return()=>window.clearTimeout(timer)},[clientId,clients]);
  async function openLists(){setTab('lists');if(!tam||tam.client.id!==clientId)await loadTam()}
  async function changeClient(id:number){setClientId(id);localStorage.setItem('venlutoClientId',String(id));setTam(null);setAnalytics(null);if(tab==='lists')await loadTam(id)}
  async function createClient(){const name=window.prompt('Client workspace name');if(!name?.trim())return;const r=await fetch('/api/clients',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name})}),result=await r.json();if(!r.ok){setToast(result.error??'Could not create workspace');return}const next={...result.client,companies:0,contacts:0,segments:0} as ClientWorkspace;setClients(current=>[...current,next]);await changeClient(next.id);setNewCredential({name:next.name,apiKey:result.apiKey});setTab('lists')}

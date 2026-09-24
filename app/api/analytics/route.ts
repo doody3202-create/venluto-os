@@ -1,5 +1,4 @@
 import {ensureDatabase,sql} from "@/lib/db";
-import {syncVenlutoSmartleadCampaigns} from "@/lib/smartlead-sync";
 export const dynamic="force-dynamic";
 type RangeKey="7d"|"30d"|"60d"|"all";
 const daysFor=(r:RangeKey)=>r==="7d"?7:r==="60d"?60:r==="all"?3650:30;
@@ -7,7 +6,6 @@ const pct=(a:number,b:number)=>b===0?(a>0?100:0):Math.round((a-b)/b*1000)/10;
 export async function GET(request:Request){
  await ensureDatabase();const url=new URL(request.url),clientId=Number(url.searchParams.get("clientId")),range=(url.searchParams.get("range")??"30d") as RangeKey;
  if(!clientId)return Response.json({error:"clientId is required"},{status:400});const [client]=await sql`SELECT id,name FROM clients WHERE id=${clientId} AND status='active'`;if(!client)return Response.json({error:"Client workspace not found"},{status:404});
- if(String(client.name).toLowerCase()==="venluto")try{await syncVenlutoSmartleadCampaigns()}catch(error){console.error("Smartlead discovery",error)}
  const days=daysFor(range),end=new Date(),start=new Date(end.getTime()-days*86400000),prior=new Date(start.getTime()-days*86400000),startIso=start.toISOString(),endIso=end.toISOString(),priorIso=prior.toISOString();
  await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) SELECT ${clientId},ca.id,'campaign_name' FROM campaigns ca WHERE LOWER(ca.name) LIKE ${`%${String(client.name).toLowerCase()}%`} ON CONFLICT DO NOTHING`;
  const current=await sql`SELECT COALESCE(SUM(people_contacted),0)::int people_contacted,COALESCE(SUM(emails_sent),0)::int emails_sent,COALESCE(SUM(uncontacted_leads),0)::int uncontacted_leads,COALESCE(SUM(replies),0)::int replies,COALESCE(SUM(positive_replies),0)::int positive_replies,COALESCE(SUM(opportunities),0)::int opportunities,COALESCE(SUM(meetings_booked),0)::int meetings_booked,COALESCE(SUM(meetings_completed),0)::int meetings_completed,COALESCE(SUM(closed_won),0)::int closed_won,COALESCE(SUM(revenue_cents),0)::bigint revenue_cents FROM campaign_daily_metrics WHERE client_id=${clientId} AND metric_date>=${startIso}::date AND metric_date<${endIso}::date+1`;

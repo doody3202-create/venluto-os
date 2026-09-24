@@ -43,6 +43,8 @@ const schema = [
 `ALTER TABLE campaign_daily_metrics ADD COLUMN IF NOT EXISTS opportunities INTEGER NOT NULL DEFAULT 0`,
 `CREATE INDEX IF NOT EXISTS idx_prospects_status_deadline ON prospects(status,deadline_at)`,
 `CREATE INDEX IF NOT EXISTS idx_replies_prospect_received ON replies(prospect_id,received_at)`,
+`CREATE INDEX IF NOT EXISTS idx_replies_campaign_received ON replies(campaign_id,received_at)`,
+`CREATE INDEX IF NOT EXISTS idx_meetings_prospect_starts ON meetings(prospect_id,starts_at)`,
 `CREATE INDEX IF NOT EXISTS idx_meetings_starts_status ON meetings(starts_at,status)`,
 `CREATE INDEX IF NOT EXISTS idx_sync_jobs_ready ON sync_jobs(status,next_retry_at,updated_at)`,
 `CREATE INDEX IF NOT EXISTS idx_tam_contacts_eligibility ON tam_contacts(client_id,eligibility_status,email_status)`,
