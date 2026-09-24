@@ -91,7 +91,15 @@ export async function GET(request: Request) {
   const [snapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
-    totals = { ...totals, opportunities: Math.max(totals.opportunities, Number(metrics.opportunities ?? 0)) };
+    totals = {
+      ...totals,
+      peopleContacted: Number(metrics.peopleContacted ?? totals.peopleContacted),
+      emailsSent: Number(metrics.emailsSent ?? totals.emailsSent),
+      uncontactedLeads: Number(metrics.uncontactedLeads ?? totals.uncontactedLeads),
+      replies: Number(metrics.replies ?? totals.replies),
+      positiveReplies: Number(metrics.positiveReplies ?? totals.positiveReplies),
+      opportunities: Number(metrics.opportunities ?? totals.opportunities),
+    };
   }
   const inbox = await sql`
     SELECT r.id,r.body,r.sentiment,r.reply_category,r.received_at,p.first_name,p.last_name,p.email,c.name company_name,ca.name campaign_name
