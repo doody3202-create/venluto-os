@@ -1,4 +1,5 @@
 import { ensureDatabase, sql } from "@/lib/db";
+import { scopedClientId } from "@/lib/portal-auth";
 export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
@@ -7,9 +8,9 @@ const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100
 export async function GET(request: Request) {
   await ensureDatabase();
   const url = new URL(request.url);
-  const clientId = Number(url.searchParams.get("clientId"));
+  const clientId = scopedClientId(request,Number(url.searchParams.get("clientId")));
   const range = (url.searchParams.get("range") ?? "30d") as RangeKey;
-  if (!clientId) return Response.json({ error: "clientId is required" }, { status: 400 });
+  if (!clientId) return Response.json({ error: "Workspace access denied" }, { status: 403 });
   const [client] = await sql`SELECT id,name FROM clients WHERE id=${clientId} AND status='active'`;
   if (!client) return Response.json({ error: "Client workspace not found" }, { status: 404 });
 

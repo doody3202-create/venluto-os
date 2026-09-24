@@ -1,11 +1,12 @@
 import { ensureDatabase, sql } from "@/lib/db";
+import { scopedClientId } from "@/lib/portal-auth";
 export const dynamic="force-dynamic";
 
 const cell=(value:unknown)=>{const text=value==null?"":typeof value==="string"?value:JSON.stringify(value);return `"${text.replaceAll('"','""')}"`};
 
 export async function GET(request:Request){
  await ensureDatabase();
- const clientId=Number(new URL(request.url).searchParams.get("clientId")??0);if(!clientId)return Response.json({error:"clientId is required"},{status:400});
+ const clientId=scopedClientId(request,Number(new URL(request.url).searchParams.get("clientId")??0));if(!clientId)return Response.json({error:"clientId is required or workspace access is denied"},{status:403});
  const [client]=await sql`SELECT id,name FROM clients WHERE id=${clientId} AND status='active'`;if(!client)return Response.json({error:"Client workspace not found"},{status:404});
  const rows=await sql`WITH segment_data AS (
    SELECT cs.client_company_id,json_agg(s.name ORDER BY s.name) segments

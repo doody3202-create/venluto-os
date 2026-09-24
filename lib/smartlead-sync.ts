@@ -1,4 +1,5 @@
 import { sql } from "./db";
+import { syncSmartleadOpportunityReplies } from "./smartlead-replies";
 
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 type Json = Record<string, unknown>;
@@ -39,11 +40,11 @@ const windows = (range: RangeKey) => {
   return result;
 };
 
-export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d") {
+export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return { ok: false, skipped: true, reason: "SMARTLEAD_API_KEY is not configured" };
-  const [client] = await sql`SELECT id FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
-  if (!client) return { ok: false, skipped: true, reason: "Venluto workspace is missing" };
+  const [client] = requestedClientId?await sql`SELECT id,name FROM clients WHERE id=${requestedClientId} AND status='active'`:await sql`SELECT id,name FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
+  if (!client) return { ok: false, skipped: true, reason: "Client workspace is missing" };
   const clientId = Number(client.id);
   const freshnessKey = `synced_at_${range}`;
   // A campaign may be updated before a large sync finishes. Only a complete snapshot
@@ -55,8 +56,9 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   if (!discovery.ok) throw new Error(`Smartlead campaign discovery failed (${discovery.status})`);
   const payload = await discovery.json() as Json | Json[];
   const raw = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Json[];
-  const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes("venluto"));
-  console.info("[Smartlead sync] campaigns discovered", { all: raw.length, venluto: campaigns.length, range });
+  const clientNeedle=String(client.name).toLowerCase();
+  const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes(clientNeedle));
+  console.info("[Smartlead sync] campaigns discovered", { all: raw.length, client:client.name, matched:campaigns.length, range });
 
   let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
@@ -141,7 +143,21 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     const now = new Date().toISOString();
     const metadata = { ...values, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}_${range}`, value])), synced_at: now, [freshnessKey]: now, status: String(campaign.status ?? campaign.state ?? "unknown") };
     const [row] = await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('smartlead',${externalId},${String(campaign.name ?? `Smartlead ${externalId}`)},${sql.json(metadata)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;
-    await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},'name:Venluto') ON CONFLICT DO NOTHING`;
+    await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},${`name:${client.name}`}) ON CONFLICT DO NOTHING`;
+  }
+
+  // Seed each workspace's Inbox/CRM from Smartlead's current opportunity
+  // categories. Future changes still arrive through the account webhook; this
+  // backfill makes a newly-created client workspace useful immediately.
+  let opportunityRepliesSynced = 0;
+  if (range === "30d") {
+    const [owner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
+    opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
+      apiKey,
+      campaignIds: completed.map(({ externalId }) => Number(externalId)).filter(Number.isFinite),
+      clientId,
+      ownerId: owner?.id ? Number(owner.id) : null,
+    });
   }
 
   if (range === "all") {
@@ -172,5 +188,5 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   }
 
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(totals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
-  return { ok: true, synced, opportunities: totals.opportunities, totals, range };
+  return { ok: true, synced, opportunityRepliesSynced, opportunities: totals.opportunities, totals, range };
 }

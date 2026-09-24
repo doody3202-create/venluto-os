@@ -1,11 +1,12 @@
 import { ensureDatabase, sql } from "@/lib/db";
+import { scopedClientId } from "@/lib/portal-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   await ensureDatabase();
   const url = new URL(request.url);
-  const clientId = Number(url.searchParams.get("clientId"));
+  const clientId = scopedClientId(request,Number(url.searchParams.get("clientId")));
   const segmentId = Number(url.searchParams.get("segmentId"));
   if (!clientId || !segmentId) {
     return Response.json({ error: "clientId and segmentId are required" }, { status: 400 });
