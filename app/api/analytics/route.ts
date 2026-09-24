@@ -85,8 +85,8 @@ export async function GET(request: Request) {
       GREATEST(COALESCE((ca.metadata_json->>${positiveKey})::int,0),COUNT(DISTINCT r.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int) opportunities,
       COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('confirmed','booked'))::int booked,
       COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('completed','showed'))::int completed,
-      COUNT(DISTINCT p.id) FILTER(WHERE p.status IN ('closed_won','won'))::int closed_won,
-      COALESCE(SUM(dm.revenue_cents),0)::bigint revenue_cents
+      (SELECT COUNT(DISTINCT p2.id)::int FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND p2.status IN ('closed_won','won') AND p2.closed_at>=${startIso} AND p2.closed_at<${endIso}) closed_won,
+      (SELECT COALESCE(SUM(won.deal_value_cents),0)::bigint FROM (SELECT DISTINCT p2.id,p2.deal_value_cents FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND p2.status IN ('closed_won','won') AND p2.closed_at>=${startIso} AND p2.closed_at<${endIso}) won) revenue_cents
     FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
     LEFT JOIN campaign_daily_metrics dm ON dm.campaign_id=ca.id AND dm.metric_date>=${startIso}::date AND dm.metric_date<${endIso}::date+1
     LEFT JOIN replies r ON r.campaign_id=ca.id AND r.received_at>=${startIso} AND r.received_at<${endIso}
