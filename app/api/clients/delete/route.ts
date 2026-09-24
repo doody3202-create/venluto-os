@@ -3,13 +3,23 @@ import { readSession } from "@/lib/portal-auth";
 
 export const dynamic = "force-dynamic";
 
+function publicOrigin(request: Request) {
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+  if (process.env.APP_URL) return new URL(process.env.APP_URL).origin;
+  return new URL(request.url).origin;
+}
+
 export async function POST(request: Request) {
   await ensureDatabase();
   const auth = readSession(request);
   if (auth?.role !== "admin") return Response.json({ error: "Admin access required" }, { status: 403 });
 
   const origin = request.headers.get("origin");
-  if (origin && origin !== new URL(request.url).origin) return Response.json({ error: "Invalid request origin" }, { status: 403 });
+  const allowedOrigins = new Set([new URL(request.url).origin, publicOrigin(request)]);
+  if (process.env.APP_URL) allowedOrigins.add(new URL(process.env.APP_URL).origin);
+  if (origin && !allowedOrigins.has(origin)) return Response.json({ error: "Invalid request origin" }, { status: 403 });
 
   const form = await request.formData();
   const clientId = Number(form.get("clientId"));
@@ -24,5 +34,5 @@ export async function POST(request: Request) {
     await tx`UPDATE clients SET status='archived',api_key_hash=NULL WHERE id=${client.id}`;
   });
 
-  return Response.redirect(new URL("/?workspaceRemoved=1", request.url), 303);
+  return Response.redirect(new URL("/?workspaceRemoved=1", publicOrigin(request)), 303);
 }
