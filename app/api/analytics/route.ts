@@ -1,7 +1,7 @@
 import { ensureDatabase, sql } from "@/lib/db";
 export const dynamic = "force-dynamic";
-type RangeKey = "7d" | "30d" | "60d" | "all";
-const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "all" ? 3650 : 30;
+type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
+const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
 
 export async function GET(request: Request) {
@@ -45,9 +45,20 @@ export async function GET(request: Request) {
     LEFT JOIN meetings m ON m.prospect_id=p.id AND m.starts_at>=${from} AND m.starts_at<${to}
     WHERE cc.client_id=${clientId}
   `)[0];
-  const [current, priorRows, nowLive, priorLive] = await Promise.all([
+  const pipelineTotals = async (from: string, to: string) => (await sql`
+    SELECT COUNT(DISTINCT p.id)::int closed_won,
+      COALESCE(SUM(CASE WHEN p.status IN ('closed_won','won') THEN p.deal_value_cents ELSE 0 END),0)::bigint revenue_cents
+    FROM prospects p
+    WHERE p.status IN ('closed_won','won') AND p.closed_at>=${from} AND p.closed_at<${to}
+      AND EXISTS (
+        SELECT 1 FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id
+        WHERE r.prospect_id=p.id AND cc.client_id=${clientId}
+      )
+  `)[0];
+  const [current, priorRows, nowLive, priorLive, nowPipeline, priorPipeline] = await Promise.all([
     metricTotals(startIso, endIso), metricTotals(priorIso, startIso),
     liveTotals(startIso, endIso), liveTotals(priorIso, startIso),
+    pipelineTotals(startIso, endIso), pipelineTotals(priorIso, startIso),
   ]);
   const combine = (row: Record<string, unknown>, live: Record<string, unknown>) => ({
     peopleContacted: Number(row.people_contacted), emailsSent: Number(row.emails_sent), uncontactedLeads: Number(row.uncontacted_leads),
@@ -57,6 +68,10 @@ export async function GET(request: Request) {
     revenueCents: Number(row.revenue_cents),
   });
   let totals = combine(current, nowLive), previous = combine(priorRows, priorLive);
+  totals.closedWon = Number(nowPipeline.closed_won);
+  totals.revenueCents = Number(nowPipeline.revenue_cents);
+  previous.closedWon = Number(priorPipeline.closed_won);
+  previous.revenueCents = Number(priorPipeline.revenue_cents);
 
   const peopleKey = `people_contacted_${range}`, emailsKey = `emails_sent_${range}`, uncontactedKey = `uncontacted_leads_${range}`, repliesKey = `replies_${range}`, positiveKey = `positive_replies_${range}`;
   const campaigns = await sql`
@@ -103,7 +118,7 @@ export async function GET(request: Request) {
   }
   // Protect the UI from legacy/partial wider snapshots while a corrected sync is
   // running. A wider cumulative range can never be below its narrower range.
-  const floorRange = range === "60d" ? "30d" : range === "all" ? "60d" : null;
+  const floorRange = range === "60d" ? "30d" : range === "90d" ? "60d" : range === "all" ? "90d" : null;
   if (floorRange) {
     const [floorSnapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${floorRange}`;
     if (floorSnapshot?.metrics_json) {

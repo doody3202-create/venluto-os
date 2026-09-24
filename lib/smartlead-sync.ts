@@ -1,6 +1,6 @@
 import { sql } from "./db";
 
-type RangeKey = "7d" | "30d" | "60d" | "all";
+type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 type Json = Record<string, unknown>;
 const n = (value: unknown) => Number(value ?? 0) || 0;
 const pick = (row: Json, keys: string[]) => {
@@ -19,7 +19,7 @@ const smartleadFetch = async (url: string) => {
   return response!;
 };
 const dates = (range: RangeKey) => {
-  const days = range === "7d" ? 7 : range === "60d" ? 60 : 30;
+  const days = range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : 30;
   const end = new Date(), start = new Date(end);
   start.setUTCDate(start.getUTCDate() - (days - 1));
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
@@ -158,7 +158,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
 
   // Wider ranges are mathematical supersets. Never publish a snapshot that is
   // smaller than an already verified narrower range for cumulative counters.
-  const narrowerRange = range === "60d" ? "30d" : range === "all" ? "60d" : null;
+  const narrowerRange = range === "60d" ? "30d" : range === "90d" ? "60d" : range === "all" ? "90d" : null;
   if (narrowerRange) {
     const [narrower] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${narrowerRange}`;
     if (narrower?.metrics_json) {
