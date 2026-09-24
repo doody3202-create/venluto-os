@@ -19,6 +19,7 @@ nav button.navActive { background:#ecf5ef;color:#075d3c; }
 .workspace { margin-top:auto; padding:14px 8px 2px; border-top:1px solid var(--line); display:grid; grid-template-columns:34px 1fr auto; align-items:center; gap:9px; }
 .avatar { width:34px; height:34px; border-radius:50%; background:#d9e8df; display:grid; place-items:center; color:#195b3e; font-size:11px; font-weight:700; }
 .workspace strong,.workspace small { display:block; } .workspace strong { font-size:13px; } .workspace small { font-size:11px; color:#8b938e; margin-top:2px; }
+.signOut{position:relative;border:0;background:transparent;color:#a9a1ae;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:18px}.signOut:hover{background:#332b3d;color:#fff}.signOut::after{content:attr(data-label);position:absolute;left:38px;top:50%;transform:translateY(-50%);background:#1E1A24;color:#fff;padding:7px 10px;border-radius:7px;font-size:10px;font-weight:700;white-space:nowrap;opacity:0;pointer-events:none;z-index:60}.signOut:hover::after{opacity:1}
 .content { grid-column:2; padding:46px 52px 80px; max-width:1390px; width:100%; }
 header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:30px; }
 .eyebrow { color:#8b948e; font-weight:700; font-size:10px; letter-spacing:.14em; margin:0 0 8px; }
