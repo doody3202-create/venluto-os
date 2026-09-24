@@ -1,2 +1,2 @@
 import {syncVenlutoSmartleadCampaigns} from "../../../../../lib/smartlead-sync";
-export async function POST(){try{return Response.json(await syncVenlutoSmartleadCampaigns(true));}catch(error){return Response.json({error:error instanceof Error?error.message:"Smartlead sync failed"},{status:500})}}
+export async function POST(){console.info('[Smartlead sync] request received');try{const result=await syncVenlutoSmartleadCampaigns(true);console.info('[Smartlead sync] completed',result);return Response.json(result)}catch(error){console.error('[Smartlead sync] failed',error);return Response.json({error:error instanceof Error?error.message:"Smartlead sync failed"},{status:500})}}
