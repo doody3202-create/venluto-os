@@ -25,7 +25,8 @@ export async function stageImport(input:ImportRequest){
  await ensureDatabase();
  if(!input.clientName?.trim()||!input.batchKey?.trim())throw new Error("clientName and batchKey are required");
  if(!Array.isArray(input.records)||input.records.length<1||input.records.length>1000)throw new Error("records must contain 1–1,000 rows per request");
- const [client]=await sql`INSERT INTO clients(name) VALUES (${input.clientName.trim()}) ON CONFLICT(name) DO UPDATE SET status='active' RETURNING id,name`;
+ const [client]=await sql`INSERT INTO clients(name) VALUES (${input.clientName.trim()}) ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id,name,status`;
+ if(client.status!=='active')throw new Error("This client workspace is archived. Restore it in Venluto OS before importing data.");
  const [batch]=await sql`INSERT INTO tam_import_batches(client_id,external_batch_key,label,source) VALUES (${client.id},${input.batchKey.trim()},${input.label?.trim()||input.batchKey.trim()},${input.source?.trim()||'Claude Code'}) ON CONFLICT(client_id,external_batch_key) DO UPDATE SET updated_at=NOW() RETURNING id,status`;
  for(let index=0;index<input.records.length;index++){
   const record=input.records[index],d=domain(record.domain),name=clean(record.company_name),linkedin=clean(record.linkedin_url),providerId=clean(record.provider_id),country=clean(record.country);
