@@ -88,7 +88,7 @@ export async function GET(request: Request) {
     positiveReplies: Math.max(totals.positiveReplies, campaigns.reduce((sum, row) => sum + Number(row.positive_replies), 0)),
     opportunities: Math.max(totals.opportunities, campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0)),
   };
-  const [snapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
+  const [snapshot] = await sql`SELECT metrics_json,synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
     totals = {
@@ -101,6 +101,18 @@ export async function GET(request: Request) {
       opportunities: Number(metrics.opportunities ?? totals.opportunities),
     };
   }
+  // Protect the UI from legacy/partial wider snapshots while a corrected sync is
+  // running. A wider cumulative range can never be below its narrower range.
+  const floorRange = range === "60d" ? "30d" : range === "all" ? "60d" : null;
+  if (floorRange) {
+    const [floorSnapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${floorRange}`;
+    if (floorSnapshot?.metrics_json) {
+      const floor = typeof floorSnapshot.metrics_json === "string" ? JSON.parse(floorSnapshot.metrics_json) : floorSnapshot.metrics_json;
+      for (const key of ["peopleContacted", "emailsSent", "replies", "positiveReplies", "opportunities"] as const) {
+        totals[key] = Math.max(totals[key], Number(floor[key] ?? 0));
+      }
+    }
+  }
   const inbox = await sql`
     SELECT r.id,r.body,r.sentiment,r.reply_category,r.received_at,p.first_name,p.last_name,p.email,c.name company_name,ca.name campaign_name
     FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
@@ -109,5 +121,5 @@ export async function GET(request: Request) {
     WHERE cc.client_id=${clientId} ORDER BY r.received_at DESC LIMIT 1000
   `;
   const comparison = Object.fromEntries(Object.keys(totals).map((key) => [key, pct(totals[key as keyof typeof totals], previous[key as keyof typeof previous])]));
-  return Response.json({ client, range, totals, comparison, ratios: { positiveReply: totals.opportunities ? Math.round(totals.peopleContacted / totals.opportunities) : null, meeting: totals.meetingsBooked ? Math.round(totals.emailsSent / totals.meetingsBooked) : null }, campaigns, inbox, demoMode: process.env.DEMO_MODE !== "false" });
+  return Response.json({ client, range, totals, syncedAt: snapshot?.synced_at ?? null, comparison, ratios: { positiveReply: totals.opportunities ? Math.round(totals.peopleContacted / totals.opportunities) : null, meeting: totals.meetingsBooked ? Math.round(totals.emailsSent / totals.meetingsBooked) : null }, campaigns, inbox, demoMode: process.env.DEMO_MODE !== "false" });
 }

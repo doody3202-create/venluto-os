@@ -42,8 +42,13 @@ const windows = (range: RangeKey) => {
 export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d") {
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return { ok: false, skipped: true, reason: "SMARTLEAD_API_KEY is not configured" };
+  const [client] = await sql`SELECT id FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
+  if (!client) return { ok: false, skipped: true, reason: "Venluto workspace is missing" };
+  const clientId = Number(client.id);
   const freshnessKey = `synced_at_${range}`;
-  const [fresh] = await sql`SELECT MAX((metadata_json->>${freshnessKey})::timestamptz) synced_at FROM campaigns WHERE provider='smartlead' AND LOWER(name) LIKE '%venluto%'`;
+  // A campaign may be updated before a large sync finishes. Only a complete snapshot
+  // is allowed to mark the whole range fresh.
+  const [fresh] = await sql`SELECT synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   if (!force && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) return { ok: true, skipped: true, reason: "fresh" };
 
   const discovery = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`);
@@ -53,16 +58,13 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes("venluto"));
   console.info("[Smartlead sync] campaigns discovered", { all: raw.length, venluto: campaigns.length, range });
 
-  const [client] = await sql`SELECT id FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
-  if (!client) return { ok: false, skipped: true, reason: "Venluto workspace is missing" };
-  const clientId = Number(client.id);
-
   let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
   const window = dates(range), dateWindows = windows(range);
   const failedCampaigns: string[] = [];
-  for (let index = 0; index < campaigns.length; index += 4) {
-    const results = await Promise.all(campaigns.slice(index, index + 4).map(async (campaign) => {
+  const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
+  for (let index = 0; index < campaigns.length; index += 6) {
+    const results = await Promise.all(campaigns.slice(index, index + 6).map(async (campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
       if (!externalId) return null;
       try {
@@ -96,6 +98,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     }));
     for (const result of results) {
       if (!result) continue;
+      completed.push(result);
       const { campaign, externalId, stats } = result;
       const contacted = pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
       const values = {
@@ -106,10 +109,6 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
         positive_replies: pick(stats, ["positive_reply_count", "positive_replies"]),
         total_leads: pick(stats, ["total_count"]),
       };
-      const now = new Date().toISOString();
-      const metadata = { ...values, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}_${range}`, value])), synced_at: now, [freshnessKey]: now, status: String(campaign.status ?? campaign.state ?? "unknown") };
-      const [row] = await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('smartlead',${externalId},${String(campaign.name ?? `Smartlead ${externalId}`)},${sql.json(metadata)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;
-      await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},'name:Venluto') ON CONFLICT DO NOTHING`;
       totals.peopleContacted += values.people_contacted;
       totals.emailsSent += values.emails_sent;
       totals.uncontactedLeads += values.uncontacted_leads;
@@ -127,6 +126,24 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     throw new Error(`Smartlead range incomplete: ${synced}/${campaigns.length} campaigns. Previous complete snapshot preserved.`);
   }
 
+  // Persist campaign rows only after every remote request succeeded. This keeps a
+  // partial attempt from looking fresh or replacing a previously complete range.
+  for (const { campaign, externalId, stats } of completed) {
+    const contacted = pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
+    const values = {
+      people_contacted: contacted,
+      emails_sent: pick(stats, ["sent_count", "emails_sent", "total_sent"]),
+      uncontacted_leads: Math.max(0, pick(stats, ["total_count"]) - contacted),
+      replies: pick(stats, ["reply_count", "replies", "total_replies"]),
+      positive_replies: pick(stats, ["positive_reply_count", "positive_replies"]),
+      total_leads: pick(stats, ["total_count"]),
+    };
+    const now = new Date().toISOString();
+    const metadata = { ...values, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}_${range}`, value])), synced_at: now, [freshnessKey]: now, status: String(campaign.status ?? campaign.state ?? "unknown") };
+    const [row] = await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('smartlead',${externalId},${String(campaign.name ?? `Smartlead ${externalId}`)},${sql.json(metadata)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;
+    await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},'name:Venluto') ON CONFLICT DO NOTHING`;
+  }
+
   if (range === "all") {
     const [allTime] = await sql`
       SELECT COUNT(DISTINCT r.id)::int opportunities
@@ -136,6 +153,22 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     `;
     totals.opportunities = Number(allTime?.opportunities ?? 0);
     totals.positiveReplies = totals.opportunities;
+  }
+
+
+  // Wider ranges are mathematical supersets. Never publish a snapshot that is
+  // smaller than an already verified narrower range for cumulative counters.
+  const narrowerRange = range === "60d" ? "30d" : range === "all" ? "60d" : null;
+  if (narrowerRange) {
+    const [narrower] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${narrowerRange}`;
+    if (narrower?.metrics_json) {
+      const metrics = typeof narrower.metrics_json === "string" ? JSON.parse(narrower.metrics_json) : narrower.metrics_json;
+      for (const key of ["peopleContacted", "emailsSent", "replies", "positiveReplies", "opportunities"] as const) {
+        if (totals[key] < n(metrics[key])) {
+          throw new Error(`Smartlead ${range} integrity check failed: ${key} (${totals[key]}) is below ${narrowerRange} (${n(metrics[key])}). Previous snapshot preserved.`);
+        }
+      }
+    }
   }
 
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(totals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
