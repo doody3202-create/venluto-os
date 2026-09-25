@@ -24,6 +24,16 @@ const dates = (range: RangeKey) => {
   start.setUTCDate(start.getUTCDate() - (days - 1));
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 };
+const dateChunks = (range: Exclude<RangeKey, "all">) => {
+  const window = dates(range), chunks: Array<{ start: string; end: string }> = [];
+  let cursor = new Date(`${window.start}T00:00:00.000Z`), final = new Date(`${window.end}T00:00:00.000Z`);
+  while (cursor <= final) {
+    const chunkEnd = new Date(Math.min(final.getTime(), cursor.getTime() + 29 * 86400000));
+    chunks.push({ start: cursor.toISOString().slice(0, 10), end: chunkEnd.toISOString().slice(0, 10) });
+    cursor = new Date(chunkEnd.getTime() + 86400000);
+  }
+  return chunks;
+};
 let rangeSyncQueue: Promise<unknown> = Promise.resolve();
 export function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
   const sync = rangeSyncQueue.then(() => performSmartleadCampaignSync(force, range, requestedClientId));
@@ -70,18 +80,30 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
-    const dateWindow = range === "all"
-      ? { start: "2000-01-01", end: new Date().toISOString().slice(0, 10) }
-      : dates(range);
     const results = await Promise.all(campaigns.map(async (campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
       if (!externalId) return null;
-      const url = range === "all"
-        ? `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`
-        : `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?start_date=${dateWindow.start}&end_date=${dateWindow.end}&api_key=${encodeURIComponent(apiKey)}`;
-      const response = await smartleadFetch(url);
-      if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
-      return { campaign, externalId, stats: await response.json() as Json };
+      if (range === "all") {
+        const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
+        if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
+        return { campaign, externalId, stats: await response.json() as Json };
+      }
+      // Smartlead rejects date windows longer than 30 days. Split wider
+      // dashboard periods into non-overlapping supported windows and aggregate
+      // the same counters shown in Smartlead.
+      const rows = await Promise.all(dateChunks(range).map(async (window) => {
+        const url = `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`;
+        const response = await smartleadFetch(url);
+        if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
+        return await response.json() as Json;
+      }));
+      const stats: Json = {
+        unique_sent_count: rows.reduce((sum, row) => sum + pick(row, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]), 0),
+        sent_count: rows.reduce((sum, row) => sum + pick(row, ["sent_count", "emails_sent", "total_sent"]), 0),
+        reply_count: rows.reduce((sum, row) => sum + pick(row, ["reply_count", "replies", "total_replies"]), 0),
+        total_count: Math.max(0, ...rows.map((row) => pick(row, ["total_count"]))),
+      };
+      return { campaign, externalId, stats };
     }));
     completed.push(...results.filter((result): result is { campaign: Json; externalId: string; stats: Json } => result !== null));
     for (const { stats } of completed) {
