@@ -19,17 +19,6 @@ const smartleadFetch = async (url: string, init?: RequestInit) => {
   }
   return response;
 };
-const pacedSmartleadFetch = async (url: string, init?: RequestInit) => {
-  const response = await smartleadFetch(url, init);
-  // Smartlead applies one account-wide limit. Keep the range synchronizer from
-  // sending a burst when several campaigns (and several 30-day chunks) match a
-  // newly-created client workspace.
-  // The account limit is reached after the first group of roughly ten calls.
-  // A one-second cadence keeps 60/90-day chunked syncs below that ceiling and
-  // is still fast enough to complete inside the route timeout.
-  await wait(1100);
-  return response;
-};
 const dates = (range: RangeKey) => {
   const days = range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : 30;
   const end = new Date(), start = new Date(end);
@@ -201,28 +190,32 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
-    // Run campaign analytics serially. Promise.all used to send up to 15 calls
-    // at once for a five-campaign 90-day workspace; one 429 then discarded the
-    // whole result and left the dashboard snapshot at zero.
-    for (const campaign of campaigns) {
+    const jobs = campaigns.flatMap((campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
-      if (!externalId) continue;
-      if (range === "all") {
-        const response = await pacedSmartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
-        if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
-        completed.push({ campaign, externalId, stats: await response.json() as Json });
-        continue;
+      if (!externalId) return [];
+      const urls = range === "all"
+        ? [`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`]
+        : dateChunks(range).map(window => `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`);
+      return urls.map(url => ({ campaign, externalId, url }));
+    });
+    const rowsByCampaign = new Map<string, { campaign: Json; rows: Json[] }>();
+    // Three requests per batch avoids Smartlead's burst limit while keeping a
+    // large client (such as Celadonsoft) inside the route execution window.
+    for (let index = 0; index < jobs.length; index += 3) {
+      const batch = jobs.slice(index, index + 3);
+      const results = await Promise.all(batch.map(async job => {
+        const response = await smartleadFetch(job.url);
+        if (!response.ok) throw new Error(`Smartlead campaign ${job.externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
+        return { ...job, stats: await response.json() as Json };
+      }));
+      for (const result of results) {
+        const entry = rowsByCampaign.get(result.externalId) ?? { campaign: result.campaign, rows: [] };
+        entry.rows.push(result.stats);
+        rowsByCampaign.set(result.externalId, entry);
       }
-      // Smartlead rejects date windows longer than 30 days. Split wider
-      // dashboard periods into non-overlapping supported windows and aggregate
-      // the same counters shown in Smartlead.
-      const rows: Json[] = [];
-      for (const window of dateChunks(range)) {
-        const url = `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`;
-        const response = await pacedSmartleadFetch(url);
-        if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
-        rows.push(await response.json() as Json);
-      }
+      if (index + 3 < jobs.length) await wait(1100);
+    }
+    for (const [externalId, { campaign, rows }] of rowsByCampaign) {
       const stats: Json = {
         unique_sent_count: rows.reduce((sum, row) => sum + pick(row, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]), 0),
         sent_count: rows.reduce((sum, row) => sum + pick(row, ["sent_count", "emails_sent", "total_sent"]), 0),
