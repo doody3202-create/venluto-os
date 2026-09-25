@@ -143,6 +143,11 @@ export async function syncSmartleadOpportunityReplies(args: {
           VALUES (${clientId},${campaign.id},'smartlead:opportunity-sync')
           ON CONFLICT DO NOTHING
         `;
+        await sql`
+          INSERT INTO client_prospects(client_id,prospect_id)
+          VALUES (${clientId},${prospect.id})
+          ON CONFLICT DO NOTHING
+        `;
         synced += 1;
       }
 
