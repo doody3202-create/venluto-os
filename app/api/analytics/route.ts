@@ -48,8 +48,16 @@ export async function GET(request: Request) {
   `)[0];
   const pipelineTotals = async (from: string, to: string) => (await sql`
     SELECT
-      COUNT(DISTINCT p.id) FILTER(WHERE EXISTS(SELECT 1 FROM prospect_transitions pt WHERE pt.prospect_id=p.id AND pt.to_status='meeting_booked' AND pt.created_at>=${from} AND pt.created_at<${to}))::int meetings_booked,
-      COUNT(DISTINCT p.id) FILTER(WHERE EXISTS(SELECT 1 FROM prospect_transitions pt WHERE pt.prospect_id=p.id AND pt.to_status IN ('showed','completed') AND pt.created_at>=${from} AND pt.created_at<${to}))::int meetings_completed,
+      COUNT(DISTINCT p.id) FILTER(WHERE
+        EXISTS(SELECT 1 FROM meetings m WHERE m.prospect_id=p.id AND m.status IN ('confirmed','booked','completed','showed') AND m.starts_at>=${from} AND m.starts_at<${to})
+        OR EXISTS(SELECT 1 FROM prospect_transitions pt WHERE pt.prospect_id=p.id AND pt.to_status IN ('meeting_booked','showed','completed','closed_won') AND pt.created_at>=${from} AND pt.created_at<${to})
+        OR (p.pipeline_tag='closed_won' AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)>=${from} AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)<${to})
+      )::int meetings_booked,
+      COUNT(DISTINCT p.id) FILTER(WHERE
+        EXISTS(SELECT 1 FROM meetings m WHERE m.prospect_id=p.id AND m.status IN ('completed','showed') AND m.starts_at>=${from} AND m.starts_at<${to})
+        OR EXISTS(SELECT 1 FROM prospect_transitions pt WHERE pt.prospect_id=p.id AND pt.to_status IN ('showed','completed','closed_won') AND pt.created_at>=${from} AND pt.created_at<${to})
+        OR (p.pipeline_tag='closed_won' AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)>=${from} AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)<${to})
+      )::int meetings_completed,
       COUNT(DISTINCT p.id) FILTER(WHERE p.pipeline_tag='closed_won' AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)>=${from} AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)<${to})::int closed_won,
       COALESCE(SUM(p.deal_value_cents) FILTER(WHERE p.pipeline_tag='closed_won' AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)>=${from} AND COALESCE(p.expected_close_date::timestamptz,p.closed_at)<${to}),0)::bigint revenue_cents
     FROM client_prospects cp JOIN prospects p ON p.id=cp.prospect_id WHERE cp.client_id=${clientId}
@@ -69,12 +77,12 @@ export async function GET(request: Request) {
   let totals = combine(current, nowLive), previous = combine(priorRows, priorLive);
   totals.closedWon = Number(nowPipeline.closed_won);
   totals.revenueCents = Number(nowPipeline.revenue_cents);
-  totals.meetingsBooked = Math.max(totals.meetingsBooked, Number(nowPipeline.meetings_booked));
-  totals.meetingsCompleted = Math.max(totals.meetingsCompleted, Number(nowPipeline.meetings_completed));
+  totals.meetingsBooked = Number(nowPipeline.meetings_booked);
+  totals.meetingsCompleted = Number(nowPipeline.meetings_completed);
   previous.closedWon = Number(priorPipeline.closed_won);
   previous.revenueCents = Number(priorPipeline.revenue_cents);
-  previous.meetingsBooked = Math.max(previous.meetingsBooked, Number(priorPipeline.meetings_booked));
-  previous.meetingsCompleted = Math.max(previous.meetingsCompleted, Number(priorPipeline.meetings_completed));
+  previous.meetingsBooked = Number(priorPipeline.meetings_booked);
+  previous.meetingsCompleted = Number(priorPipeline.meetings_completed);
 
   const peopleKey = `people_contacted_${range}`, emailsKey = `emails_sent_${range}`, uncontactedKey = `uncontacted_leads_${range}`, repliesKey = `replies_${range}`, positiveKey = `positive_replies_${range}`;
   const campaigns = await sql`
@@ -88,8 +96,16 @@ export async function GET(request: Request) {
         THEN (ca.metadata_json->>${positiveKey})::int
         ELSE COUNT(DISTINCT p.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int
       END opportunities,
-      GREATEST(COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('confirmed','booked'))::int,(SELECT COUNT(DISTINCT pt.prospect_id)::int FROM prospect_transitions pt JOIN replies r2 ON r2.prospect_id=pt.prospect_id WHERE r2.campaign_id=ca.id AND pt.to_status='meeting_booked' AND pt.created_at>=${startIso} AND pt.created_at<${endIso})) booked,
-      GREATEST(COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('completed','showed'))::int,(SELECT COUNT(DISTINCT pt.prospect_id)::int FROM prospect_transitions pt JOIN replies r2 ON r2.prospect_id=pt.prospect_id WHERE r2.campaign_id=ca.id AND pt.to_status IN ('showed','completed') AND pt.created_at>=${startIso} AND pt.created_at<${endIso})) completed,
+      (SELECT COUNT(DISTINCT p2.id)::int FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND (
+        EXISTS(SELECT 1 FROM meetings m2 WHERE m2.prospect_id=p2.id AND m2.status IN ('confirmed','booked','completed','showed') AND m2.starts_at>=${startIso} AND m2.starts_at<${endIso})
+        OR EXISTS(SELECT 1 FROM prospect_transitions pt WHERE pt.prospect_id=p2.id AND pt.to_status IN ('meeting_booked','showed','completed','closed_won') AND pt.created_at>=${startIso} AND pt.created_at<${endIso})
+        OR (p2.pipeline_tag='closed_won' AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)>=${startIso} AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)<${endIso})
+      )) booked,
+      (SELECT COUNT(DISTINCT p2.id)::int FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND (
+        EXISTS(SELECT 1 FROM meetings m2 WHERE m2.prospect_id=p2.id AND m2.status IN ('completed','showed') AND m2.starts_at>=${startIso} AND m2.starts_at<${endIso})
+        OR EXISTS(SELECT 1 FROM prospect_transitions pt WHERE pt.prospect_id=p2.id AND pt.to_status IN ('showed','completed','closed_won') AND pt.created_at>=${startIso} AND pt.created_at<${endIso})
+        OR (p2.pipeline_tag='closed_won' AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)>=${startIso} AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)<${endIso})
+      )) completed,
       (SELECT COUNT(DISTINCT p2.id)::int FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND p2.pipeline_tag='closed_won' AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)>=${startIso} AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)<${endIso}) closed_won,
       (SELECT COALESCE(SUM(pipeline.deal_value_cents),0)::bigint FROM (SELECT DISTINCT p2.id,p2.deal_value_cents FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND p2.pipeline_tag='closed_won' AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)>=${startIso} AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)<${endIso} AND p2.deal_value_cents>0) pipeline) revenue_cents
     FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
