@@ -174,7 +174,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   // backfill makes a newly-created client workspace useful immediately.
   if (range === "all") {
     const [allTime] = await sql`
-      SELECT COUNT(DISTINCT r.id)::int opportunities
+      SELECT COUNT(DISTINCT r.prospect_id)::int opportunities
       FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id
       WHERE cc.client_id=${clientId}
         AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')

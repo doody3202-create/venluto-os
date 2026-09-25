@@ -84,7 +84,10 @@ export async function GET(request: Request) {
       GREATEST(COALESCE((ca.metadata_json->>${uncontactedKey})::int,0),COALESCE(SUM(dm.uncontacted_leads),0)::int) uncontacted,
       GREATEST(COALESCE((ca.metadata_json->>${repliesKey})::int,0),COUNT(DISTINCT r.id)::int) replies,
       GREATEST(COALESCE((ca.metadata_json->>${positiveKey})::int,0),COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int) positive_replies,
-      GREATEST(COALESCE((ca.metadata_json->>${positiveKey})::int,0),COUNT(DISTINCT r.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int) opportunities,
+      CASE WHEN ${range !== "all"} AND (ca.metadata_json->>${positiveKey}) IS NOT NULL
+        THEN (ca.metadata_json->>${positiveKey})::int
+        ELSE COUNT(DISTINCT p.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int
+      END opportunities,
       GREATEST(COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('confirmed','booked'))::int,(SELECT COUNT(DISTINCT pt.prospect_id)::int FROM prospect_transitions pt JOIN replies r2 ON r2.prospect_id=pt.prospect_id WHERE r2.campaign_id=ca.id AND pt.to_status='meeting_booked' AND pt.created_at>=${startIso} AND pt.created_at<${endIso})) booked,
       GREATEST(COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('completed','showed'))::int,(SELECT COUNT(DISTINCT pt.prospect_id)::int FROM prospect_transitions pt JOIN replies r2 ON r2.prospect_id=pt.prospect_id WHERE r2.campaign_id=ca.id AND pt.to_status IN ('showed','completed') AND pt.created_at>=${startIso} AND pt.created_at<${endIso})) completed,
       (SELECT COUNT(DISTINCT p2.id)::int FROM replies r2 JOIN prospects p2 ON p2.id=r2.prospect_id WHERE r2.campaign_id=ca.id AND p2.pipeline_tag='closed_won' AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)>=${startIso} AND COALESCE(p2.expected_close_date::timestamptz,p2.closed_at)<${endIso}) closed_won,
