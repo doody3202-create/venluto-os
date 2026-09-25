@@ -19,6 +19,14 @@ const smartleadFetch = async (url: string, init?: RequestInit) => {
   }
   return response;
 };
+const pacedSmartleadFetch = async (url: string, init?: RequestInit) => {
+  const response = await smartleadFetch(url, init);
+  // Smartlead applies one account-wide limit. Keep the range synchronizer from
+  // sending a burst when several campaigns (and several 30-day chunks) match a
+  // newly-created client workspace.
+  await wait(350);
+  return response;
+};
 const dates = (range: RangeKey) => {
   const days = range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : 30;
   const end = new Date(), start = new Date(end);
@@ -190,32 +198,36 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
-    const results = await Promise.all(campaigns.map(async (campaign) => {
+    // Run campaign analytics serially. Promise.all used to send up to 15 calls
+    // at once for a five-campaign 90-day workspace; one 429 then discarded the
+    // whole result and left the dashboard snapshot at zero.
+    for (const campaign of campaigns) {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
-      if (!externalId) return null;
+      if (!externalId) continue;
       if (range === "all") {
-        const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
+        const response = await pacedSmartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
         if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
-        return { campaign, externalId, stats: await response.json() as Json };
+        completed.push({ campaign, externalId, stats: await response.json() as Json });
+        continue;
       }
       // Smartlead rejects date windows longer than 30 days. Split wider
       // dashboard periods into non-overlapping supported windows and aggregate
       // the same counters shown in Smartlead.
-      const rows = await Promise.all(dateChunks(range).map(async (window) => {
+      const rows: Json[] = [];
+      for (const window of dateChunks(range)) {
         const url = `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`;
-        const response = await smartleadFetch(url);
+        const response = await pacedSmartleadFetch(url);
         if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
-        return await response.json() as Json;
-      }));
+        rows.push(await response.json() as Json);
+      }
       const stats: Json = {
         unique_sent_count: rows.reduce((sum, row) => sum + pick(row, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]), 0),
         sent_count: rows.reduce((sum, row) => sum + pick(row, ["sent_count", "emails_sent", "total_sent"]), 0),
         reply_count: rows.reduce((sum, row) => sum + pick(row, ["reply_count", "replies", "total_replies"]), 0),
         total_count: Math.max(0, ...rows.map((row) => pick(row, ["total_count"]))),
       };
-      return { campaign, externalId, stats };
-    }));
-    completed.push(...results.filter((result): result is { campaign: Json; externalId: string; stats: Json } => result !== null));
+      completed.push({ campaign, externalId, stats });
+    }
     for (const item of completed) item.stats.positive_reply_count = opportunityCounts.get(item.externalId) ?? 0;
     for (const { stats } of completed) {
       totals.peopleContacted += pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
