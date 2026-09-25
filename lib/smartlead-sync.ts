@@ -106,17 +106,46 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const [fresh] = await sql`SELECT synced_at,metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   const freshMetrics = typeof fresh?.metrics_json === "string" ? JSON.parse(fresh.metrics_json) : fresh?.metrics_json as Json | undefined;
   const hasSentVolume = n(freshMetrics?.peopleContacted) > 0 || n(freshMetrics?.emailsSent) > 0 || campaigns.length === 0;
-  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v4";
+  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v5";
   const hasImportedOpportunityRecords = freshMetrics?.opportunityRecordsSource === "smartlead-inbox-v1";
   if (!force && hasSentVolume && hasDatedOpportunities && hasImportedOpportunityRecords && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
+  const campaignIds = campaigns.map(campaign => Number(campaign.id ?? campaign.campaign_id)).filter(Number.isFinite);
+  const opportunityCounts = await smartleadOpportunityCounts(apiKey, campaignIds, range);
+  const opportunityTotal = [...opportunityCounts.values()].reduce((sum, value) => sum + value, 0);
+  const earlyTotals: {
+    peopleContacted: number; emailsSent: number; uncontactedLeads: number;
+    replies: number; positiveReplies: number; opportunities: number;
+    opportunitySource: string; opportunityRecordsSource?: string;
+  } = {
+    peopleContacted: n(freshMetrics?.peopleContacted),
+    emailsSent: n(freshMetrics?.emailsSent),
+    uncontactedLeads: n(freshMetrics?.uncontactedLeads),
+    replies: n(freshMetrics?.replies),
+    positiveReplies: opportunityTotal,
+    opportunities: opportunityTotal,
+    opportunitySource: "smartlead-categories-v5",
+  };
+  await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(earlyTotals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
+
+  // Populate Inbox, Tasks and CRM before the larger per-campaign analytics
+  // requests. A rate limit in sent-volume analytics must never leave the
+  // opportunity surfaces empty when Smartlead already returned those leads.
+  const [opportunityOwner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
+  const opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
+    apiKey, campaignIds, clientId,
+    ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
+  });
+  earlyTotals.opportunityRecordsSource = "smartlead-inbox-v1";
+  await sql`UPDATE campaign_analytics_snapshots SET metrics_json=${sql.json(earlyTotals)},synced_at=NOW() WHERE client_id=${clientId} AND range_key=${range}`;
+
   const totals: {
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
     replies: number; positiveReplies: number; opportunities: number;
     opportunitySource: string; opportunityRecordsSource?: string;
-  } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v4" };
+  } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v5", opportunityRecordsSource: "smartlead-inbox-v1" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
     const results = await Promise.all(campaigns.map(async (campaign) => {
@@ -145,7 +174,6 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
       return { campaign, externalId, stats };
     }));
     completed.push(...results.filter((result): result is { campaign: Json; externalId: string; stats: Json } => result !== null));
-    const opportunityCounts = await smartleadOpportunityCounts(apiKey, completed.map(({ externalId }) => Number(externalId)).filter(Number.isFinite), range);
     for (const item of completed) item.stats.positive_reply_count = opportunityCounts.get(item.externalId) ?? 0;
     for (const { stats } of completed) {
       totals.peopleContacted += pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
@@ -191,16 +219,6 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   }
 
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(totals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
-  let opportunityRepliesSynced = 0;
-  const [opportunityOwner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
-  opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
-    apiKey,
-    campaignIds: campaigns.map(campaign => Number(campaign.id ?? campaign.campaign_id)).filter(Number.isFinite),
-    clientId,
-    ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
-  });
-  totals.opportunityRecordsSource = "smartlead-inbox-v1";
-  await sql`UPDATE campaign_analytics_snapshots SET metrics_json=${sql.json(totals)},synced_at=NOW() WHERE client_id=${clientId} AND range_key=${range}`;
   console.info("[Smartlead sync] opportunities reconciled", { client: client.name, opportunityRepliesSynced });
   return { ok: true, synced, opportunityRepliesSynced, opportunities: totals.opportunities, totals, range };
 }
