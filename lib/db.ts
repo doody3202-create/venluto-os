@@ -14,6 +14,8 @@ const schema = [
 `ALTER TABLE prospects ADD COLUMN IF NOT EXISTS expected_close_date DATE`,
 `ALTER TABLE prospects ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ`,
 `ALTER TABLE prospects ADD COLUMN IF NOT EXISTS pipeline_tag TEXT NOT NULL DEFAULT 'opportunity'`,
+`ALTER TABLE prospects ADD COLUMN IF NOT EXISTS meeting_booked_at TIMESTAMPTZ`,
+`ALTER TABLE prospects ADD COLUMN IF NOT EXISTS showed_at TIMESTAMPTZ`,
 `CREATE TABLE IF NOT EXISTS campaigns (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'smartlead', external_id TEXT NOT NULL, UNIQUE(provider,external_id))`,
 `ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS metadata_json JSONB NOT NULL DEFAULT '{}'`,
 `CREATE TABLE IF NOT EXISTS external_refs (id BIGSERIAL PRIMARY KEY, provider TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id BIGINT NOT NULL, external_id TEXT NOT NULL, metadata_json JSONB NOT NULL DEFAULT '{}', UNIQUE(provider,entity_type,external_id))`,
