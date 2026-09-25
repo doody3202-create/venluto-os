@@ -143,11 +143,11 @@ export async function GET(request: Request) {
     // milestones and New MRR recorded inside Venluto OS.
     totals = {
       ...totals,
-      peopleContacted: Math.max(Number(metrics.peopleContacted ?? 0), Number(thirtyDayMetrics.peopleContacted ?? 0)),
-      emailsSent: Math.max(Number(metrics.emailsSent ?? 0), Number(thirtyDayMetrics.emailsSent ?? 0)),
+      peopleContacted: Math.max(Number(metrics.peopleContacted ?? 0), Number(thirtyDayMetrics.peopleContacted ?? 0), totals.peopleContacted),
+      emailsSent: Math.max(Number(metrics.emailsSent ?? 0), Number(thirtyDayMetrics.emailsSent ?? 0), totals.emailsSent),
       uncontactedLeads: Number(metrics.uncontactedLeads ?? 0),
-      replies: Math.max(Number(metrics.replies ?? 0), Number(thirtyDayMetrics.replies ?? 0)),
-      positiveReplies: Math.max(Number(metrics.positiveReplies ?? 0), Number(thirtyDayMetrics.positiveReplies ?? 0)),
+      replies: Math.max(Number(metrics.replies ?? 0), Number(thirtyDayMetrics.replies ?? 0), totals.replies),
+      positiveReplies: Math.max(Number(metrics.positiveReplies ?? 0), Number(thirtyDayMetrics.positiveReplies ?? 0), totals.positiveReplies),
       opportunities: Math.max(Number(metrics.opportunities ?? 0), Number(thirtyDayMetrics.opportunities ?? 0), totals.opportunities),
     };
   }
