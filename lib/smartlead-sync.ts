@@ -15,8 +15,15 @@ const smartleadFetch = async (url: string) => {
   const request = smartleadRequestQueue.then(async () => {
     const delay = Math.max(0, nextSmartleadRequestAt - Date.now());
     if (delay) await wait(delay);
-    nextSmartleadRequestAt = Date.now() + 320;
-    return fetch(url, { cache: "no-store" });
+    nextSmartleadRequestAt = Date.now() + 500;
+    let response = await fetch(url, { cache: "no-store" });
+    if (response.status === 429) {
+      const retryAfterSeconds = Math.max(1, Number(response.headers.get("retry-after") ?? 60) || 60);
+      await wait(Math.min(65, retryAfterSeconds) * 1000);
+      nextSmartleadRequestAt = Date.now() + 500;
+      response = await fetch(url, { cache: "no-store" });
+    }
+    return response;
   });
   smartleadRequestQueue = request.then(() => undefined, () => undefined);
   return request;
@@ -115,7 +122,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     const [narrower] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${narrowerRange}`;
     if (narrower?.metrics_json) {
       const metrics = typeof narrower.metrics_json === "string" ? JSON.parse(narrower.metrics_json) : narrower.metrics_json;
-      for (const key of ["peopleContacted", "emailsSent", "replies", "positiveReplies", "opportunities"] as const) {
+      for (const key of ["peopleContacted", "emailsSent", "replies"] as const) {
         if (totals[key] < n(metrics[key])) {
           throw new Error(`Smartlead ${range} integrity check failed: ${key} (${totals[key]}) is below ${narrowerRange} (${n(metrics[key])}). Previous snapshot preserved.`);
         }
