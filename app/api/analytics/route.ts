@@ -126,12 +126,12 @@ export async function GET(request: Request) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
     totals = {
       ...totals,
-      peopleContacted: Number(metrics.peopleContacted ?? totals.peopleContacted),
-      emailsSent: Number(metrics.emailsSent ?? totals.emailsSent),
-      uncontactedLeads: Number(metrics.uncontactedLeads ?? totals.uncontactedLeads),
-      replies: Number(metrics.replies ?? totals.replies),
-      positiveReplies: Number(metrics.positiveReplies ?? totals.positiveReplies),
-      opportunities: Number(metrics.opportunities ?? totals.opportunities),
+      peopleContacted: Math.max(totals.peopleContacted, Number(metrics.peopleContacted ?? 0)),
+      emailsSent: Math.max(totals.emailsSent, Number(metrics.emailsSent ?? 0)),
+      uncontactedLeads: Math.max(totals.uncontactedLeads, Number(metrics.uncontactedLeads ?? 0)),
+      replies: Math.max(totals.replies, Number(metrics.replies ?? 0)),
+      positiveReplies: Math.max(totals.positiveReplies, Number(metrics.positiveReplies ?? 0)),
+      opportunities: Math.max(totals.opportunities, Number(metrics.opportunities ?? 0)),
     };
   }
   // Protect the UI from legacy/partial wider snapshots while a corrected sync is
