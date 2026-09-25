@@ -51,7 +51,7 @@ const windows = (range: RangeKey) => {
 export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return { ok: false, skipped: true, reason: "SMARTLEAD_API_KEY is not configured" };
-  const [client] = requestedClientId?await sql`SELECT id,name FROM clients WHERE id=${requestedClientId} AND status='active'`:await sql`SELECT id,name FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
+  const [client] = requestedClientId?await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE id=${requestedClientId} AND status='active'`:await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
   if (!client) return { ok: false, skipped: true, reason: "Client workspace is missing" };
   const clientId = Number(client.id);
   const freshnessKey = `synced_at_${range}`;
@@ -60,7 +60,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   if (!discovery.ok) throw new Error(`Smartlead campaign discovery failed (${discovery.status})`);
   const payload = await discovery.json() as Json | Json[];
   const raw = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Json[];
-  const clientNeedle=String(client.name).toLowerCase();
+  const clientNeedle=String(client.campaign_match_keyword??client.name).toLowerCase();
   const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes(clientNeedle));
   console.info("[Smartlead sync] campaigns discovered", { all: raw.length, client:client.name, matched:campaigns.length, range });
 

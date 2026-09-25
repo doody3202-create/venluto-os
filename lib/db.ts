@@ -31,6 +31,8 @@ const schema = [
 `CREATE TABLE IF NOT EXISTS clients (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'active', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 `CREATE TABLE IF NOT EXISTS client_prospects (client_id BIGINT NOT NULL REFERENCES clients(id), prospect_id BIGINT NOT NULL REFERENCES prospects(id), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(client_id,prospect_id))`,
 `ALTER TABLE clients ADD COLUMN IF NOT EXISTS api_key_hash TEXT`,
+`ALTER TABLE clients ADD COLUMN IF NOT EXISTS campaign_match_keyword TEXT`,
+`UPDATE clients SET campaign_match_keyword='celadonsoft' WHERE LOWER(name) LIKE 'celadonsoft%beverage%' AND campaign_match_keyword IS NULL`,
 `CREATE TABLE IF NOT EXISTS workspace_users (id BIGSERIAL PRIMARY KEY, client_id BIGINT NOT NULL REFERENCES clients(id), email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'client', status TEXT NOT NULL DEFAULT 'active', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 `ALTER TABLE operation_tasks ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES clients(id)`,
 `UPDATE operation_tasks SET client_id=(SELECT id FROM clients WHERE name='Venluto' LIMIT 1) WHERE client_id IS NULL`,

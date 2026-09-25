@@ -41,8 +41,8 @@ export async function POST(request:Request){
  const incomingCampaign=(p.campaign_name??"").trim();
  const [knownCampaign]=p.campaign_id?await sql`SELECT name FROM campaigns WHERE provider='smartlead' AND external_id=${String(p.campaign_id)} LIMIT 1`:[];
  const resolvedCampaign=incomingCampaign||String(knownCampaign?.name??"");
- const activeClients=await sql`SELECT id,name FROM clients WHERE status='active' ORDER BY LENGTH(name) DESC`;
- const matchedClient=activeClients.find(client=>resolvedCampaign.toLowerCase().includes(String(client.name).toLowerCase()));
+ const activeClients=await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE status='active' ORDER BY LENGTH(name) DESC`;
+ const matchedClients=activeClients.filter(client=>resolvedCampaign.toLowerCase().includes(String(client.campaign_match_keyword??client.name).toLowerCase())),matchedClient=matchedClients[0];
  if(!matchedClient){console.info("Smartlead event ignored",{eventType,category,campaign:resolvedCampaign||null,reason:"no_client_workspace_match"});return Response.json({ok:true,ignored:true,reason:"no_client_workspace_match",campaign:resolvedCampaign})}
  if(!category||!allowedCategories.includes(category.toLowerCase())){
   // A lead can be moved out of an opportunity category in Smartlead. Reflect that
@@ -76,8 +76,7 @@ export async function POST(request:Request){
  const ext=String(p.campaign_id??'unknown'),campaignName=resolvedCampaign||`Smartlead ${ext}`;
  const rawReply=p.reply_message?.text??p.message_body??p.preview_text??p.reply_text??p.message??p.reply_body??p.reply_message?.html??'(No reply body)',replyBody=plain(rawReply)||'(No reply body)';
  const [campaign]=await sql`INSERT INTO campaigns(name,provider,external_id) VALUES (${campaignName},'smartlead',${ext}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
- await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${matchedClient.id},${campaign.id},${`name:${matchedClient.name}`}) ON CONFLICT DO NOTHING`;
- await sql`INSERT INTO client_prospects(client_id,prospect_id) VALUES (${matchedClient.id},${prospect.id}) ON CONFLICT DO NOTHING`;
+ for(const client of matchedClients){await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${client.id},${campaign.id},${`name:${client.campaign_match_keyword??client.name}`}) ON CONFLICT DO NOTHING`;await sql`INSERT INTO client_prospects(client_id,prospect_id) VALUES (${client.id},${prospect.id}) ON CONFLICT DO NOTHING`}
  await sql`INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at) VALUES (${prospect.id},${campaign.id},${replyId||eventId},${replyBody},'positive',${category},${p.event_timestamp??p.received_at??p.reply_message?.time??new Date().toISOString()}) ON CONFLICT(provider_reply_id) DO UPDATE SET body=EXCLUDED.body,reply_category=EXCLUDED.reply_category,received_at=EXCLUDED.received_at`;
  await transitionProspect(prospect.id,'action_due',`Smartlead positive reply · ${category}`);
  await sql`UPDATE prospects SET next_action='Respond to positive reply',deadline_at=${iso(5/60)},updated_at=NOW() WHERE id=${prospect.id}`;

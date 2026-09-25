@@ -11,12 +11,12 @@ export async function GET(request: Request) {
   const clientId = scopedClientId(request,Number(url.searchParams.get("clientId")));
   const range = (url.searchParams.get("range") ?? "30d") as RangeKey;
   if (!clientId) return Response.json({ error: "Workspace access denied" }, { status: 403 });
-  const [client] = await sql`SELECT id,name FROM clients WHERE id=${clientId} AND status='active'`;
+  const [client] = await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE id=${clientId} AND status='active'`;
   if (!client) return Response.json({ error: "Client workspace not found" }, { status: 404 });
 
   const days = daysFor(range), end = new Date(), start = new Date(end.getTime() - days * 86400000), prior = new Date(start.getTime() - days * 86400000);
   const startIso = start.toISOString(), endIso = end.toISOString(), priorIso = prior.toISOString();
-  await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) SELECT ${clientId},ca.id,'campaign_name' FROM campaigns ca WHERE LOWER(ca.name) LIKE ${`%${String(client.name).toLowerCase()}%`} ON CONFLICT DO NOTHING`;
+  await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) SELECT ${clientId},ca.id,'campaign_name' FROM campaigns ca WHERE LOWER(ca.name) LIKE ${`%${String(client.campaign_match_keyword??client.name).toLowerCase()}%`} ON CONFLICT DO NOTHING`;
 
   const metricTotals = async (from: string, to: string) => (await sql`
     SELECT COALESCE(SUM(people_contacted),0)::int people_contacted,
