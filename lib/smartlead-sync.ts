@@ -8,12 +8,37 @@ const pick = (row: Json, keys: string[]) => {
   for (const key of keys) if (row[key] !== undefined && row[key] !== null) return n(row[key]);
   return 0;
 };
+const additiveMetricKeys = ["sent_count", "unique_sent_count", "reply_count", "total_reply_count", "non_ooo_reply_count", "positive_reply_count", "positive_replies"];
+const metricKeys = [...additiveMetricKeys, "total_count", "people_contacted", "unique_leads_contacted", "emails_sent", "total_sent", "replies", "total_replies"];
+const metricRows = (value: unknown): Json[] => {
+  if (Array.isArray(value)) return value.flatMap(metricRows);
+  if (!value || typeof value !== "object") return [];
+  const row = value as Json;
+  if (metricKeys.some((key) => row[key] !== undefined) || row.campaign_lead_stats) return [row];
+  for (const key of ["data", "analytics", "campaign_analytics", "stats", "results", "result"]) {
+    const nested = metricRows(row[key]);
+    if (nested.length) return nested;
+  }
+  return [];
+};
 const unwrapStats = (value: unknown): Json => {
-  if (Array.isArray(value)) return (value[0] as Json | undefined) ?? {};
-  const row = (value && typeof value === "object" ? value : {}) as Json;
-  if (Array.isArray(row.data)) return (row.data[0] as Json | undefined) ?? row;
-  if (row.data && typeof row.data === "object") return row.data as Json;
-  return row;
+  const rows = metricRows(value);
+  if (!rows.length) return {};
+  const totals: Json = {};
+  for (const row of rows) {
+    for (const key of additiveMetricKeys) totals[key] = n(totals[key]) + n(row[key]);
+    for (const key of ["people_contacted", "unique_leads_contacted", "emails_sent", "total_sent", "replies", "total_replies"]) {
+      totals[key] = n(totals[key]) + n(row[key]);
+    }
+    totals.total_count = Math.max(n(totals.total_count), n(row.total_count));
+    const interested = n((row.campaign_lead_stats as Json | undefined)?.interested);
+    if (interested) {
+      const leadStats = (totals.campaign_lead_stats as Json | undefined) ?? {};
+      leadStats.interested = n(leadStats.interested) + interested;
+      totals.campaign_lead_stats = leadStats;
+    }
+  }
+  return totals;
 };
 const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "positive_replies"]) || n((stats.campaign_lead_stats as Json | undefined)?.interested);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
