@@ -1,6 +1,5 @@
 import { ensureDatabase, sql } from "@/lib/db";
 import { scopedClientId } from "@/lib/portal-auth";
-import { syncVenlutoSmartleadCampaigns } from "@/lib/smartlead-sync";
 export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
@@ -14,21 +13,6 @@ export async function GET(request: Request) {
   if (!clientId) return Response.json({ error: "Workspace access denied" }, { status: 403 });
   const [client] = await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE id=${clientId} AND status='active'`;
   if (!client) return Response.json({ error: "Client workspace not found" }, { status: 404 });
-
-  // A missing/zero Smartlead range must be filled before Overview answers.
-  // The background refresh remains useful for normal updates, but it cannot be
-  // the only path for a brand-new client/range because the browser may leave or
-  // suspend that request. This makes SalesTarget 7d deterministic.
-  const [availableSnapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
-  const availableMetrics = typeof availableSnapshot?.metrics_json === "string" ? JSON.parse(availableSnapshot.metrics_json) : availableSnapshot?.metrics_json;
-  const hasCurrentOpportunityData = availableMetrics?.opportunitySource === "smartlead-categories-v2";
-  if (!availableMetrics || !hasCurrentOpportunityData || (Number(availableMetrics.peopleContacted ?? 0) === 0 && Number(availableMetrics.emailsSent ?? 0) === 0)) {
-    try {
-      await syncVenlutoSmartleadCampaigns(false, range, clientId);
-    } catch (error) {
-      console.error("[Analytics] required Smartlead range sync failed", { clientId, range, error });
-    }
-  }
 
   const days = daysFor(range), end = new Date(), start = new Date(end.getTime() - days * 86400000), prior = new Date(start.getTime() - days * 86400000);
   const startIso = start.toISOString(), endIso = end.toISOString(), priorIso = prior.toISOString();
