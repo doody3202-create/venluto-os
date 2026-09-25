@@ -9,24 +9,14 @@ const pick = (row: Json, keys: string[]) => {
 };
 const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "positive_replies"]) || n((stats.campaign_lead_stats as Json | undefined)?.interested);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-let nextSmartleadRequestAt = 0;
-let smartleadRequestQueue: Promise<unknown> = Promise.resolve();
 const smartleadFetch = async (url: string) => {
-  const request = smartleadRequestQueue.then(async () => {
-    const delay = Math.max(0, nextSmartleadRequestAt - Date.now());
-    if (delay) await wait(delay);
-    nextSmartleadRequestAt = Date.now() + 500;
-    let response = await fetch(url, { cache: "no-store" });
-    if (response.status === 429) {
-      const retryAfterSeconds = Math.max(1, Number(response.headers.get("retry-after") ?? 60) || 60);
-      await wait(Math.min(65, retryAfterSeconds) * 1000);
-      nextSmartleadRequestAt = Date.now() + 500;
-      response = await fetch(url, { cache: "no-store" });
-    }
-    return response;
-  });
-  smartleadRequestQueue = request.then(() => undefined, () => undefined);
-  return request;
+  let response = await fetch(url, { cache: "no-store" });
+  if (response.status === 429) {
+    const retryAfterSeconds = Math.max(1, Number(response.headers.get("retry-after") ?? 60) || 60);
+    await wait(Math.min(65, retryAfterSeconds) * 1000);
+    response = await fetch(url, { cache: "no-store" });
+  }
+  return response;
 };
 const dates = (range: RangeKey) => {
   const days = range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : 30;
@@ -34,7 +24,14 @@ const dates = (range: RangeKey) => {
   start.setUTCDate(start.getUTCDate() - (days - 1));
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 };
-export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
+let rangeSyncQueue: Promise<unknown> = Promise.resolve();
+export function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
+  const sync = rangeSyncQueue.then(() => performSmartleadCampaignSync(force, range, requestedClientId));
+  rangeSyncQueue = sync.then(() => undefined, () => undefined);
+  return sync;
+}
+
+async function performSmartleadCampaignSync(force = false, range: RangeKey = "30d", requestedClientId?:number) {
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return { ok: false, skipped: true, reason: "SMARTLEAD_API_KEY is not configured" };
   const [client] = requestedClientId?await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE id=${requestedClientId} AND status='active'`:await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE LOWER(name)='venluto' LIMIT 1`;
