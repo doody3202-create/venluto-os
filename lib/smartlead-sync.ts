@@ -65,34 +65,25 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     const dateWindow = range === "all"
       ? { start: "2000-01-01", end: new Date().toISOString().slice(0, 10) }
       : dates(range);
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      start_date: dateWindow.start,
-      end_date: dateWindow.end,
-      timezone: process.env.SMARTLEAD_TIMEZONE ?? "Europe/Bucharest",
-      campaign_ids: externalIds.join(","),
-      full_data: "true",
-    });
-    const performanceParams = new URLSearchParams(params);
-    performanceParams.set("limit", "1000");
-    performanceParams.set("offset", "0");
-    const [overallResponse, performanceResponse] = await Promise.all([
-      smartleadFetch(`https://server.smartlead.ai/api/v1/analytics/overall-stats-v2?${params}`),
-      smartleadFetch(`https://server.smartlead.ai/api/v1/analytics/campaign/overall-stats?${performanceParams}`),
-    ]);
-    if (!overallResponse.ok || !performanceResponse.ok) {
-      throw new Error(`Smartlead aggregate analytics failed (overall ${overallResponse.status}, campaigns ${performanceResponse.status}). Previous snapshot preserved.`);
-    }
-    const overallPayload = await overallResponse.json() as Json;
-    const overallStats = (((overallPayload.data as Json | undefined)?.overall_stats ?? {}) as Json);
-    totals.peopleContacted = n(overallStats.unique_lead_count);
-    totals.emailsSent = n(overallStats.sent);
-    totals.replies = n(overallStats.replied);
-    totals.positiveReplies = n(overallStats.positive_replied);
-    totals.opportunities = totals.positiveReplies;
-
-    const performancePayload = await performanceResponse.json() as Json;
-    const performanceRows = (((performancePayload.data as Json | undefined)?.campaign_wise_performance ?? []) as Json[]);
+    const batches: string[][] = [];
+    for (let index = 0; index < externalIds.length; index += 8) batches.push(externalIds.slice(index, index + 8));
+    const batchResults = await Promise.all(batches.map(async (campaignIds) => {
+      const params = new URLSearchParams({
+        api_key: apiKey,
+        start_date: dateWindow.start,
+        end_date: dateWindow.end,
+        timezone: process.env.SMARTLEAD_TIMEZONE ?? "Europe/Bucharest",
+        campaign_ids: campaignIds.join(","),
+        full_data: "true",
+        limit: "100",
+        offset: "0",
+      });
+      const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/analytics/campaign/overall-stats?${params}`);
+      if (!response.ok) throw new Error(`Smartlead campaign analytics failed (${response.status}). Previous snapshot preserved.`);
+      const payload = await response.json() as Json;
+      return (((payload.data as Json | undefined)?.campaign_wise_performance ?? []) as Json[]);
+    }));
+    const performanceRows = batchResults.flat();
     const performanceById = new Map(performanceRows.map((row) => [String(row.id ?? row.campaign_id ?? ""), row]));
     for (const campaign of campaigns) {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
@@ -106,6 +97,13 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
         total_count: n(performance.unique_lead_count),
       } });
     }
+    for (const { stats } of completed) {
+      totals.peopleContacted += pick(stats, ["unique_sent_count"]);
+      totals.emailsSent += pick(stats, ["sent_count"]);
+      totals.replies += pick(stats, ["reply_count"]);
+      totals.positiveReplies += positiveReplies(stats);
+    }
+    totals.opportunities = totals.positiveReplies;
   }
   const synced = completed.length;
 
