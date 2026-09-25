@@ -96,11 +96,11 @@ export async function syncSmartleadOpportunityReplies(args: {
       };
       const rows = payload.data ?? payload.messages ?? [];
 
-      for (const row of rows) {
+      const imported = await Promise.all(rows.map(async (row) => {
         const categoryName = categoryNames[Number(row.category?.id ?? row.lead_category_id)] ?? row.category?.name;
         const email = String(row.lead?.email ?? row.lead_email ?? "").trim().toLowerCase();
         const externalCampaignId = String(row.campaign?.id ?? row.email_campaign_id ?? "");
-        if (!categoryName || !email || !externalCampaignId) continue;
+        if (!categoryName || !email || !externalCampaignId) return 0;
 
         const domain = email.split("@")[1] ?? "unknown.local";
         const [company] = await sql`
@@ -113,7 +113,7 @@ export async function syncSmartleadOpportunityReplies(args: {
           SELECT id FROM campaigns
           WHERE provider='smartlead' AND external_id=${externalCampaignId}
         `;
-        if (!campaign) continue;
+        if (!campaign) return 0;
 
         const [prospect] = await sql`
           INSERT INTO prospects(first_name,last_name,email,normalized_email,source,status,owner_id,company_id,next_action,deadline_at)
@@ -169,8 +169,9 @@ export async function syncSmartleadOpportunityReplies(args: {
           VALUES (${clientId},${prospect.id})
           ON CONFLICT DO NOTHING
         `;
-        synced += 1;
-      }
+        return 1;
+      }));
+      synced += imported.reduce<number>((sum, value) => sum + value, 0);
 
       if (rows.length < 20) break;
       offset += rows.length;
