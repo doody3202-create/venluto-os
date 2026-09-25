@@ -85,11 +85,11 @@ export async function GET(request: Request) {
   const peopleKey = `people_contacted_${range}`, emailsKey = `emails_sent_${range}`, uncontactedKey = `uncontacted_leads_${range}`, repliesKey = `replies_${range}`, positiveKey = `positive_replies_${range}`;
   const campaigns = await sql`
     SELECT ca.id,ca.name,ca.external_id,ca.metadata_json->>'status' status,
-      GREATEST(COALESCE((ca.metadata_json->>${peopleKey})::int,0),COALESCE(SUM(dm.people_contacted),0)::int) contacted,
-      GREATEST(COALESCE((ca.metadata_json->>${emailsKey})::int,0),COALESCE(SUM(dm.emails_sent),0)::int) emails_sent,
-      GREATEST(COALESCE((ca.metadata_json->>${uncontactedKey})::int,0),COALESCE(SUM(dm.uncontacted_leads),0)::int) uncontacted,
-      GREATEST(COALESCE((ca.metadata_json->>${repliesKey})::int,0),COUNT(DISTINCT r.id)::int) replies,
-      GREATEST(COALESCE((ca.metadata_json->>${positiveKey})::int,0),COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int) positive_replies,
+      COALESCE((ca.metadata_json->>${peopleKey})::int,COALESCE(SUM(dm.people_contacted),0)::int) contacted,
+      COALESCE((ca.metadata_json->>${emailsKey})::int,COALESCE(SUM(dm.emails_sent),0)::int) emails_sent,
+      COALESCE((ca.metadata_json->>${uncontactedKey})::int,COALESCE(SUM(dm.uncontacted_leads),0)::int) uncontacted,
+      COALESCE((ca.metadata_json->>${repliesKey})::int,COUNT(DISTINCT r.id)::int) replies,
+      COALESCE((ca.metadata_json->>${positiveKey})::int,COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int) positive_replies,
       CASE WHEN ${range !== "all"} AND (ca.metadata_json->>${positiveKey}) IS NOT NULL
         THEN (ca.metadata_json->>${positiveKey})::int
         ELSE COUNT(DISTINCT p.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int
@@ -114,37 +114,29 @@ export async function GET(request: Request) {
   `;
   if (campaigns.length) totals = {
     ...totals,
-    peopleContacted: Math.max(totals.peopleContacted, campaigns.reduce((sum, row) => sum + Number(row.contacted), 0)),
-    emailsSent: Math.max(totals.emailsSent, campaigns.reduce((sum, row) => sum + Number(row.emails_sent), 0)),
-    uncontactedLeads: Math.max(totals.uncontactedLeads, campaigns.reduce((sum, row) => sum + Number(row.uncontacted), 0)),
-    replies: Math.max(totals.replies, campaigns.reduce((sum, row) => sum + Number(row.replies), 0)),
-    positiveReplies: Math.max(totals.positiveReplies, campaigns.reduce((sum, row) => sum + Number(row.positive_replies), 0)),
-    opportunities: Math.max(totals.opportunities, campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0)),
+    peopleContacted: campaigns.reduce((sum, row) => sum + Number(row.contacted), 0),
+    emailsSent: campaigns.reduce((sum, row) => sum + Number(row.emails_sent), 0),
+    uncontactedLeads: campaigns.reduce((sum, row) => sum + Number(row.uncontacted), 0),
+    replies: campaigns.reduce((sum, row) => sum + Number(row.replies), 0),
+    positiveReplies: campaigns.reduce((sum, row) => sum + Number(row.positive_replies), 0),
+    opportunities: campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
   };
   const [snapshot] = await sql`SELECT metrics_json,synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
+    // Smartlead is the source of truth for outbound volume and results. Never
+    // let legacy imports or locally counted replies inflate its selected-period
+    // campaign totals. The database remains authoritative only for pipeline
+    // milestones and New MRR recorded inside Venluto OS.
     totals = {
       ...totals,
-      peopleContacted: Math.max(totals.peopleContacted, Number(metrics.peopleContacted ?? 0)),
-      emailsSent: Math.max(totals.emailsSent, Number(metrics.emailsSent ?? 0)),
-      uncontactedLeads: Math.max(totals.uncontactedLeads, Number(metrics.uncontactedLeads ?? 0)),
-      replies: Math.max(totals.replies, Number(metrics.replies ?? 0)),
-      positiveReplies: Math.max(totals.positiveReplies, Number(metrics.positiveReplies ?? 0)),
-      opportunities: Math.max(totals.opportunities, Number(metrics.opportunities ?? 0)),
+      peopleContacted: Number(metrics.peopleContacted ?? 0),
+      emailsSent: Number(metrics.emailsSent ?? 0),
+      uncontactedLeads: Number(metrics.uncontactedLeads ?? 0),
+      replies: Number(metrics.replies ?? 0),
+      positiveReplies: Number(metrics.positiveReplies ?? 0),
+      opportunities: Number(metrics.opportunities ?? 0),
     };
-  }
-  // Protect the UI from legacy/partial wider snapshots while a corrected sync is
-  // running. A wider cumulative range can never be below its narrower range.
-  const floorRange = range === "60d" ? "30d" : range === "90d" ? "60d" : range === "all" ? "90d" : null;
-  if (floorRange) {
-    const [floorSnapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${floorRange}`;
-    if (floorSnapshot?.metrics_json) {
-      const floor = typeof floorSnapshot.metrics_json === "string" ? JSON.parse(floorSnapshot.metrics_json) : floorSnapshot.metrics_json;
-      for (const key of ["peopleContacted", "emailsSent", "replies", "positiveReplies", "opportunities"] as const) {
-        totals[key] = Math.max(totals[key], Number(floor[key] ?? 0));
-      }
-    }
   }
   const inbox = await sql`
     SELECT * FROM (
