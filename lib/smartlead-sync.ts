@@ -8,38 +8,6 @@ const pick = (row: Json, keys: string[]) => {
   for (const key of keys) if (row[key] !== undefined && row[key] !== null) return n(row[key]);
   return 0;
 };
-const additiveMetricKeys = ["sent_count", "unique_sent_count", "reply_count", "total_reply_count", "non_ooo_reply_count", "positive_reply_count", "positive_replies"];
-const metricKeys = [...additiveMetricKeys, "total_count", "people_contacted", "unique_leads_contacted", "emails_sent", "total_sent", "replies", "total_replies"];
-const metricRows = (value: unknown): Json[] => {
-  if (Array.isArray(value)) return value.flatMap(metricRows);
-  if (!value || typeof value !== "object") return [];
-  const row = value as Json;
-  if (metricKeys.some((key) => row[key] !== undefined) || row.campaign_lead_stats) return [row];
-  for (const key of ["data", "analytics", "campaign_analytics", "stats", "results", "result"]) {
-    const nested = metricRows(row[key]);
-    if (nested.length) return nested;
-  }
-  return [];
-};
-const unwrapStats = (value: unknown): Json => {
-  const rows = metricRows(value);
-  if (!rows.length) return {};
-  const totals: Json = {};
-  for (const row of rows) {
-    for (const key of additiveMetricKeys) totals[key] = n(totals[key]) + n(row[key]);
-    for (const key of ["people_contacted", "unique_leads_contacted", "emails_sent", "total_sent", "replies", "total_replies"]) {
-      totals[key] = n(totals[key]) + n(row[key]);
-    }
-    totals.total_count = Math.max(n(totals.total_count), n(row.total_count));
-    const interested = n((row.campaign_lead_stats as Json | undefined)?.interested);
-    if (interested) {
-      const leadStats = (totals.campaign_lead_stats as Json | undefined) ?? {};
-      leadStats.interested = n(leadStats.interested) + interested;
-      totals.campaign_lead_stats = leadStats;
-    }
-  }
-  return totals;
-};
 const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "positive_replies"]) || n((stats.campaign_lead_stats as Json | undefined)?.interested);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let nextSmartleadRequestAt = 0;
@@ -62,21 +30,6 @@ const dates = (range: RangeKey) => {
   start.setUTCDate(start.getUTCDate() - (days - 1));
   return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 };
-const windows = (range: RangeKey) => {
-  if (range === "all") return [];
-  const { start, end } = dates(range), result: Array<{ start: string; end: string }> = [];
-  let cursor = new Date(`${start}T00:00:00Z`), last = new Date(`${end}T00:00:00Z`);
-  while (cursor <= last) {
-    const windowEnd = new Date(cursor);
-    windowEnd.setUTCDate(windowEnd.getUTCDate() + 29);
-    if (windowEnd > last) windowEnd.setTime(last.getTime());
-    result.push({ start: cursor.toISOString().slice(0, 10), end: windowEnd.toISOString().slice(0, 10) });
-    cursor = new Date(windowEnd);
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return result;
-};
-
 export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return { ok: false, skipped: true, reason: "SMARTLEAD_API_KEY is not configured" };
@@ -126,71 +79,56 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced };
   }
 
-  let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
-  const window = dates(range), dateWindows = windows(range);
-  const failedCampaigns: string[] = [];
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
-  for (let index = 0; index < campaigns.length; index += 1) {
-    const results = await Promise.all(campaigns.slice(index, index + 1).map(async (campaign) => {
+  const externalIds = campaigns.map((campaign) => String(campaign.id ?? campaign.campaign_id ?? "")).filter(Boolean);
+  if (externalIds.length) {
+    const dateWindow = range === "all"
+      ? { start: "2000-01-01", end: new Date().toISOString().slice(0, 10) }
+      : dates(range);
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      start_date: dateWindow.start,
+      end_date: dateWindow.end,
+      timezone: process.env.SMARTLEAD_TIMEZONE ?? "Europe/Bucharest",
+      campaign_ids: externalIds.join(","),
+      full_data: "true",
+    });
+    const performanceParams = new URLSearchParams(params);
+    performanceParams.set("limit", "1000");
+    performanceParams.set("offset", "0");
+    const [overallResponse, performanceResponse] = await Promise.all([
+      smartleadFetch(`https://server.smartlead.ai/api/v1/analytics/overall-stats-v2?${params}`),
+      smartleadFetch(`https://server.smartlead.ai/api/v1/analytics/campaign/overall-stats?${performanceParams}`),
+    ]);
+    if (!overallResponse.ok || !performanceResponse.ok) {
+      throw new Error(`Smartlead aggregate analytics failed (overall ${overallResponse.status}, campaigns ${performanceResponse.status}). Previous snapshot preserved.`);
+    }
+    const overallPayload = await overallResponse.json() as Json;
+    const overallStats = (((overallPayload.data as Json | undefined)?.overall_stats ?? {}) as Json);
+    totals.peopleContacted = n(overallStats.unique_lead_count);
+    totals.emailsSent = n(overallStats.sent);
+    totals.replies = n(overallStats.replied);
+    totals.positiveReplies = n(overallStats.positive_replied);
+    totals.opportunities = totals.positiveReplies;
+
+    const performancePayload = await performanceResponse.json() as Json;
+    const performanceRows = (((performancePayload.data as Json | undefined)?.campaign_wise_performance ?? []) as Json[]);
+    const performanceById = new Map(performanceRows.map((row) => [String(row.id ?? row.campaign_id ?? ""), row]));
+    for (const campaign of campaigns) {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
-      if (!externalId) return null;
-      try {
-        if (range === "all") {
-          const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
-          if (!response.ok) throw new Error(`all-time analytics rejected (${response.status})`);
-          const stats = unwrapStats(await response.json());
-          return { campaign, externalId, stats };
-        }
-        const parts: Json[] = [];
-        for (const dateWindow of dateWindows) {
-          const suffix = `start_date=${dateWindow.start}&end_date=${dateWindow.end}&api_key=${encodeURIComponent(apiKey)}`;
-          const analyticsResponse = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?${suffix}`);
-          if (!analyticsResponse.ok) throw new Error(`dated analytics rejected (${analyticsResponse.status})`);
-          parts.push(unwrapStats(await analyticsResponse.json()));
-        }
-        const stats: Json = {};
-        for (const part of parts) {
-          for (const key of ["sent_count", "unique_sent_count", "reply_count", "total_reply_count", "non_ooo_reply_count"]) stats[key] = n(stats[key]) + n(part[key]);
-          stats.positive_reply_count = n(stats.positive_reply_count) + positiveReplies(part);
-          stats.total_count = Math.max(n(stats.total_count), n(part.total_count));
-        }
-        return { campaign, externalId, stats };
-      } catch (error) {
-        console.warn("[Smartlead sync] analytics failed; preserving prior metrics", { campaignId: externalId, range, error: error instanceof Error ? error.message : String(error) });
-        failedCampaigns.push(externalId);
-        return null;
-      }
-    }));
-    for (const result of results) {
-      if (!result) continue;
-      completed.push(result);
-      const { campaign, externalId, stats } = result;
-      const contacted = pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
-      const values = {
-        people_contacted: contacted,
-        emails_sent: pick(stats, ["sent_count", "emails_sent", "total_sent"]),
-        uncontacted_leads: Math.max(0, pick(stats, ["total_count"]) - contacted),
-        replies: pick(stats, ["reply_count", "replies", "total_replies"]),
-        positive_replies: positiveReplies(stats),
-        total_leads: pick(stats, ["total_count"]),
-      };
-      totals.peopleContacted += values.people_contacted;
-      totals.emailsSent += values.emails_sent;
-      totals.uncontactedLeads += values.uncontacted_leads;
-      totals.replies += values.replies;
-      totals.positiveReplies += values.positive_replies;
-      totals.opportunities += values.positive_replies;
-      synced++;
+      if (!externalId) continue;
+      const performance = performanceById.get(externalId) ?? {};
+      completed.push({ campaign, externalId, stats: {
+        unique_sent_count: n(performance.unique_lead_count),
+        sent_count: n(performance.sent),
+        reply_count: n(performance.replied),
+        positive_reply_count: n(performance.positive_replied),
+        total_count: n(performance.unique_lead_count),
+      } });
     }
   }
-
-  if (failedCampaigns.length || synced !== campaigns.length) {
-    console.error("[Smartlead sync] incomplete range rejected; previous complete snapshot preserved", {
-      range, expected: campaigns.length, synced, failedCampaigns,
-    });
-    throw new Error(`Smartlead range incomplete: ${synced}/${campaigns.length} campaigns. Previous complete snapshot preserved.`);
-  }
+  const synced = completed.length;
 
   // Persist campaign rows only after every remote request succeeded. This keeps a
   // partial attempt from looking fresh or replacing a previously complete range.
@@ -209,21 +147,6 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     const [row] = await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('smartlead',${externalId},${String(campaign.name ?? `Smartlead ${externalId}`)},${sql.json(metadata)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;
     await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},${`name:${client.name}`}) ON CONFLICT DO NOTHING`;
   }
-
-  // Seed each workspace's Inbox/CRM from Smartlead's current opportunity
-  // categories. Future changes still arrive through the account webhook; this
-  // backfill makes a newly-created client workspace useful immediately.
-  if (range === "all") {
-    const [allTime] = await sql`
-      SELECT COUNT(DISTINCT r.prospect_id)::int opportunities
-      FROM replies r JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id
-      WHERE cc.client_id=${clientId}
-        AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
-    `;
-    totals.opportunities = Number(allTime?.opportunities ?? 0);
-    totals.positiveReplies = totals.opportunities;
-  }
-
 
   // Wider ranges are mathematical supersets. Never publish a snapshot that is
   // smaller than an already verified narrower range for cumulative counters.
