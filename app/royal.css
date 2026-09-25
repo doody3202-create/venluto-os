@@ -20,3 +20,15 @@ table{color:#211c3b}th,.performanceTable th{background:#f1eef9;color:#716a86}td{
 .opportunityRows article:hover,.opportunityRows article:focus-within{background:#f0ecff}
 .opportunityRows article:hover .opportunityIdentity,.opportunityRows article:hover .opportunityValue,.opportunityRows article:focus-within .opportunityIdentity,.opportunityRows article:focus-within .opportunityValue{color:#17142e}
 .segmentRows article:hover,.segmentRows article:focus-within,.libraryRows article:hover,.libraryRows article:focus-within{background:#f4f1ff;color:#17142e}
+
+/* Clean TAM, playbooks, task queue and sidebar identity. */
+.tamStats.compact{grid-template-columns:repeat(2,minmax(180px,260px))}
+.segmentPreview>div article{background:#f7f5fc;color:#211c3b;border:1px solid #e4dff1}
+.segmentPreview>div article strong{color:#211c3b}.segmentPreview>div article small{color:#716b82}.segmentPreview>div article em{color:#6746df}
+.diagnosticHeader{background:radial-gradient(circle at 86% 18%,rgba(100,178,255,.20),transparent 32%),linear-gradient(135deg,#241650,#563db0)!important;border-color:#7660d0;color:#fff}
+.diagnosticHeader span{color:#cbbfff}.diagnosticHeader p{color:#ddd7f1}
+.diagnosticGrid details{background:#fff;border:1px solid #ddd7f2;border-radius:12px;color:#17142e;box-shadow:0 12px 30px rgba(51,37,105,.07);overflow:hidden}
+.diagnosticGrid summary{list-style:none;cursor:pointer;padding:18px}.diagnosticGrid summary::-webkit-details-marker{display:none}.diagnosticGrid b{color:#6746df}.diagnosticGrid h3{color:#17142e}.diagnosticGrid strong{display:block;color:#6746df}.diagnosticGrid p{color:#716b80}.diagnosticGrid summary em{display:block;margin-top:13px;color:#6746df;font-size:8px;font-style:normal;font-weight:900}.diagnosticGrid details[open]{border-color:#a99aeb}.diagnosticGrid details[open] summary{background:#f7f4ff}.diagnosticGrid ol{margin:0;padding:15px 22px 18px 38px;border-top:1px solid #e7e2f3;color:#4f4962;font-size:9px;line-height:1.7}
+.overdueOnly{display:flex;flex-direction:column;gap:14px}.overdueOnly>header{padding:20px 22px;border-radius:14px;background:linear-gradient(135deg,#261850,#5b43b6);color:#fff}.overdueOnly>header span{font-size:8px;font-weight:900;letter-spacing:.13em;color:#cbbfff}.overdueOnly>header h2{margin:6px 0 4px;font:600 23px Fraunces,Georgia,serif}.overdueOnly>header p{margin:0;color:#ddd7f1;font-size:10px}
+.workspace .avatar{width:48px;height:48px;overflow:hidden;border:1px solid rgba(173,150,255,.38);background:#050509}.workspace .avatar img{width:100%;height:100%;display:block;object-fit:contain}
+.signOut{width:38px;height:38px;border:1px solid rgba(173,150,255,.34);background:#21184d;color:#ddd5ff;border-radius:10px;font-size:21px}.signOut:hover{background:#6746df;color:#fff;border-color:#8d72ef}.signOut::after{background:#21184d;border:1px solid rgba(173,150,255,.35)}
