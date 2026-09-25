@@ -95,8 +95,14 @@ export async function GET(request: Request) {
         CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'emails_sent_30d')::int,0) ELSE 0 END
       ) emails_sent,
       COALESCE((ca.metadata_json->>${uncontactedKey})::int,COALESCE(SUM(dm.uncontacted_leads),0)::int) uncontacted,
-      COALESCE((ca.metadata_json->>${repliesKey})::int,COUNT(DISTINCT r.id)::int) replies,
-      COALESCE((ca.metadata_json->>${positiveKey})::int,COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int) positive_replies,
+      GREATEST(
+        COALESCE((ca.metadata_json->>${repliesKey})::int,COUNT(DISTINCT r.id)::int),
+        CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'replies_30d')::int,0) ELSE 0 END
+      ) replies,
+      GREATEST(
+        COALESCE((ca.metadata_json->>${positiveKey})::int,COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int),
+        CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'positive_replies_30d')::int,0) ELSE 0 END
+      ) positive_replies,
       GREATEST(
         COALESCE((ca.metadata_json->>${positiveKey})::int,0),
         COUNT(DISTINCT p.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int
