@@ -60,47 +60,25 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
 
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
-  const externalIds = campaigns.map((campaign) => String(campaign.id ?? campaign.campaign_id ?? "")).filter(Boolean);
-  if (externalIds.length) {
+  if (campaigns.length) {
     const dateWindow = range === "all"
       ? { start: "2000-01-01", end: new Date().toISOString().slice(0, 10) }
       : dates(range);
-    const batches: string[][] = [];
-    for (let index = 0; index < externalIds.length; index += 8) batches.push(externalIds.slice(index, index + 8));
-    const batchResults = await Promise.all(batches.map(async (campaignIds) => {
-      const params = new URLSearchParams({
-        api_key: apiKey,
-        start_date: dateWindow.start,
-        end_date: dateWindow.end,
-        timezone: process.env.SMARTLEAD_TIMEZONE ?? "Europe/Bucharest",
-        campaign_ids: campaignIds.join(","),
-        full_data: "true",
-        limit: "100",
-        offset: "0",
-      });
-      const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/analytics/campaign/overall-stats?${params}`);
-      if (!response.ok) throw new Error(`Smartlead campaign analytics failed (${response.status}). Previous snapshot preserved.`);
-      const payload = await response.json() as Json;
-      return (((payload.data as Json | undefined)?.campaign_wise_performance ?? []) as Json[]);
-    }));
-    const performanceRows = batchResults.flat();
-    const performanceById = new Map(performanceRows.map((row) => [String(row.id ?? row.campaign_id ?? ""), row]));
-    for (const campaign of campaigns) {
+    const results = await Promise.all(campaigns.map(async (campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
-      if (!externalId) continue;
-      const performance = performanceById.get(externalId) ?? {};
-      completed.push({ campaign, externalId, stats: {
-        unique_sent_count: n(performance.unique_lead_count),
-        sent_count: n(performance.sent),
-        reply_count: n(performance.replied),
-        positive_reply_count: n(performance.positive_replied),
-        total_count: n(performance.unique_lead_count),
-      } });
-    }
+      if (!externalId) return null;
+      const url = range === "all"
+        ? `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`
+        : `https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?start_date=${dateWindow.start}&end_date=${dateWindow.end}&api_key=${encodeURIComponent(apiKey)}`;
+      const response = await smartleadFetch(url);
+      if (!response.ok) throw new Error(`Smartlead campaign ${externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
+      return { campaign, externalId, stats: await response.json() as Json };
+    }));
+    completed.push(...results.filter((result): result is { campaign: Json; externalId: string; stats: Json } => result !== null));
     for (const { stats } of completed) {
-      totals.peopleContacted += pick(stats, ["unique_sent_count"]);
-      totals.emailsSent += pick(stats, ["sent_count"]);
-      totals.replies += pick(stats, ["reply_count"]);
+      totals.peopleContacted += pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
+      totals.emailsSent += pick(stats, ["sent_count", "emails_sent", "total_sent"]);
+      totals.replies += pick(stats, ["reply_count", "replies", "total_replies"]);
       totals.positiveReplies += positiveReplies(stats);
     }
     totals.opportunities = totals.positiveReplies;
