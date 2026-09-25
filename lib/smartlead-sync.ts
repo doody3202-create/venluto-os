@@ -48,7 +48,7 @@ const smartleadOpportunityCounts = async (apiKey: string, campaignIds: number[],
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ offset, limit: 100, filters: { emailStatus: "Replied", campaignId: group, leadCategories: { categoryIdsIn: [1, 2, 5] } }, sortBy: "REPLY_TIME_DESC" }),
+          body: JSON.stringify({ offset, limit: 20, filters: { emailStatus: "Replied", campaignId: group, leadCategories: { categoryIdsIn: [1, 2, 5] } }, sortBy: "REPLY_TIME_DESC" }),
         },
       );
       if (!response.ok) throw new Error(`Smartlead opportunity analytics failed (${response.status}). Previous snapshot preserved.`);
@@ -60,7 +60,7 @@ const smartleadOpportunityCounts = async (apiKey: string, campaignIds: number[],
         const campaignId = String(row.email_campaign_id ?? (row.campaign as Json | undefined)?.id ?? "");
         if (campaignId) counts.set(campaignId, (counts.get(campaignId) ?? 0) + 1);
       }
-      if (rows.length < 100) break;
+      if (rows.length < 20) break;
       offset += rows.length;
     }
   }
