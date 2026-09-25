@@ -132,15 +132,19 @@ export async function GET(request: Request) {
     }
   }
   const inbox = await sql`
-    SELECT r.id,r.prospect_id,r.body,r.sentiment,r.reply_category,r.received_at,
-      p.first_name,p.last_name,p.email,p.title,p.status,p.pipeline_tag,p.owner_id,
-      p.next_action,p.deadline_at,p.close_url,p.deal_value_cents,p.expected_close_date,p.closed_at,
-      o.name owner_name,o.initials owner_initials,
-      c.name company_name,c.domain company_domain,ca.name campaign_name
-    FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
-    JOIN replies r ON r.campaign_id=ca.id AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
-    JOIN prospects p ON p.id=r.prospect_id LEFT JOIN companies c ON c.id=p.company_id LEFT JOIN owners o ON o.id=p.owner_id
-    WHERE cc.client_id=${clientId} ORDER BY r.received_at DESC LIMIT 1000
+    SELECT * FROM (
+      SELECT DISTINCT ON (r.prospect_id) r.id,r.prospect_id,r.body,r.sentiment,r.reply_category,r.received_at,
+        p.first_name,p.last_name,p.email,p.title,p.status,p.pipeline_tag,p.owner_id,
+        p.next_action,p.deadline_at,p.close_url,p.deal_value_cents,p.expected_close_date,p.closed_at,
+        o.name owner_name,o.initials owner_initials,
+        c.name company_name,c.domain company_domain,ca.name campaign_name
+      FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
+      JOIN replies r ON r.campaign_id=ca.id AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
+      JOIN prospects p ON p.id=r.prospect_id LEFT JOIN companies c ON c.id=p.company_id LEFT JOIN owners o ON o.id=p.owner_id
+      WHERE cc.client_id=${clientId}
+        AND LOWER(TRIM(COALESCE(r.body,''))) <> 'reply available in smartlead'
+      ORDER BY r.prospect_id,r.received_at DESC
+    ) visible_replies ORDER BY received_at DESC LIMIT 1000
   `;
   const activity = await sql`
     SELECT metric_date::text date,COALESCE(SUM(emails_sent),0)::int emails_sent,COALESCE(SUM(replies),0)::int replies
