@@ -10,11 +10,16 @@ const pick = (row: Json, keys: string[]) => {
 const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "positive_replies"]) || n((stats.campaign_lead_stats as Json | undefined)?.interested);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let nextSmartleadRequestAt = 0;
+let smartleadRequestQueue: Promise<unknown> = Promise.resolve();
 const smartleadFetch = async (url: string) => {
-  const delay = Math.max(0, nextSmartleadRequestAt - Date.now());
-  if (delay) await wait(delay);
-  nextSmartleadRequestAt = Date.now() + 500;
-  return fetch(url, { cache: "no-store" });
+  const request = smartleadRequestQueue.then(async () => {
+    const delay = Math.max(0, nextSmartleadRequestAt - Date.now());
+    if (delay) await wait(delay);
+    nextSmartleadRequestAt = Date.now() + 320;
+    return fetch(url, { cache: "no-store" });
+  });
+  smartleadRequestQueue = request.then(() => undefined, () => undefined);
+  return request;
 };
 const dates = (range: RangeKey) => {
   const days = range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : 30;
