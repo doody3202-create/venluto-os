@@ -105,12 +105,12 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const [fresh] = await sql`SELECT synced_at,metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   const freshMetrics = typeof fresh?.metrics_json === "string" ? JSON.parse(fresh.metrics_json) : fresh?.metrics_json as Json | undefined;
   const hasSentVolume = n(freshMetrics?.peopleContacted) > 0 || n(freshMetrics?.emailsSent) > 0 || campaigns.length === 0;
-  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v1";
+  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v2";
   if (!force && hasSentVolume && hasDatedOpportunities && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
-  const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v1" };
+  const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v2" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
     const results = await Promise.all(campaigns.map(async (campaign) => {

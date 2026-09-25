@@ -21,7 +21,8 @@ export async function GET(request: Request) {
   // suspend that request. This makes SalesTarget 7d deterministic.
   const [availableSnapshot] = await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   const availableMetrics = typeof availableSnapshot?.metrics_json === "string" ? JSON.parse(availableSnapshot.metrics_json) : availableSnapshot?.metrics_json;
-  if (!availableMetrics || (Number(availableMetrics.peopleContacted ?? 0) === 0 && Number(availableMetrics.emailsSent ?? 0) === 0)) {
+  const hasCurrentOpportunityData = availableMetrics?.opportunitySource === "smartlead-categories-v2";
+  if (!availableMetrics || !hasCurrentOpportunityData || (Number(availableMetrics.peopleContacted ?? 0) === 0 && Number(availableMetrics.emailsSent ?? 0) === 0)) {
     try {
       await syncVenlutoSmartleadCampaigns(false, range, clientId);
     } catch (error) {
