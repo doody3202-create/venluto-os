@@ -56,27 +56,14 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     const[row]=await sql`INSERT INTO campaigns(provider,external_id,name) VALUES ('smartlead',${externalId},${String(campaign.name??`Smartlead ${externalId}`)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
     await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},${`name:${client.name}`}) ON CONFLICT DO NOTHING`;
   }
-  const [recentOpportunitySync] = await sql`SELECT 1 FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND synced_at>NOW()-INTERVAL '2 minutes' LIMIT 1`;
-  let opportunityRepliesSynced = 0;
-  if (!recentOpportunitySync) {
-    const [opportunityOwner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
-    opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
-      apiKey,
-      campaignIds: campaigns.map(campaign=>Number(campaign.id??campaign.campaign_id)).filter(Number.isFinite),
-      clientId,
-      ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
-    });
-  }
-  console.info("[Smartlead sync] opportunities reconciled",{client:client.name,opportunityRepliesSynced});
-
-  // Campaign analytics may be cached, but the operational opportunity inbox must
-  // always reconcile first. Otherwise a fresh reporting snapshot makes Tasks and
-  // CRM incorrectly appear empty until the analytics cache expires.
+  // Keep Overview cheap and deterministic. Opportunity inbox reconciliation is
+  // deliberately performed after the analytics snapshot is committed, so a
+  // large reply history can never consume the account limit before totals save.
   const [fresh] = await sql`SELECT synced_at,metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   const freshMetrics = typeof fresh?.metrics_json === "string" ? JSON.parse(fresh.metrics_json) : fresh?.metrics_json as Json | undefined;
   const hasSentVolume = n(freshMetrics?.peopleContacted) > 0 || n(freshMetrics?.emailsSent) > 0 || campaigns.length === 0;
   if (!force && hasSentVolume && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
-    return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced };
+    return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
@@ -164,5 +151,17 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   }
 
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(totals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
+  let opportunityRepliesSynced = 0;
+  const [recentOpportunitySync] = await sql`SELECT 1 FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key<>${range} AND synced_at>NOW()-INTERVAL '2 minutes' LIMIT 1`;
+  if (!recentOpportunitySync) {
+    const [opportunityOwner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
+    opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
+      apiKey,
+      campaignIds: campaigns.map(campaign=>Number(campaign.id??campaign.campaign_id)).filter(Number.isFinite),
+      clientId,
+      ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
+    });
+  }
+  console.info("[Smartlead sync] opportunities reconciled",{client:client.name,opportunityRepliesSynced});
   return { ok: true, synced, opportunityRepliesSynced, opportunities: totals.opportunities, totals, range };
 }
