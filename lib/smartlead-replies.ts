@@ -116,9 +116,9 @@ export async function syncSmartleadOpportunityReplies(args: {
             last_name=CASE WHEN EXCLUDED.last_name<>'' THEN EXCLUDED.last_name ELSE prospects.last_name END,
             company_id=EXCLUDED.company_id,
             owner_id=COALESCE(prospects.owner_id,EXCLUDED.owner_id),
-            status=CASE WHEN prospects.status IN ('not_relevant','opportunity','replied_positive') THEN 'action_due' ELSE prospects.status END,
-            next_action=CASE WHEN prospects.status IN ('not_relevant','opportunity','replied_positive') THEN 'Reply to opportunity' ELSE prospects.next_action END,
-            deadline_at=CASE WHEN prospects.status IN ('not_relevant','opportunity','replied_positive') THEN NOW()+INTERVAL '5 minutes' ELSE prospects.deadline_at END,
+            status=CASE WHEN prospects.status IN ('opportunity','replied_positive') THEN 'action_due' ELSE prospects.status END,
+            next_action=CASE WHEN prospects.status IN ('opportunity','replied_positive') THEN 'Reply to opportunity' ELSE prospects.next_action END,
+            deadline_at=CASE WHEN prospects.status IN ('opportunity','replied_positive') THEN NOW()+INTERVAL '5 minutes' ELSE prospects.deadline_at END,
             updated_at=NOW()
           RETURNING id
         `;
