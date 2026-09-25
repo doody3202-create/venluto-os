@@ -138,6 +138,12 @@ export async function GET(request: Request) {
     JOIN prospects p ON p.id=r.prospect_id LEFT JOIN companies c ON c.id=p.company_id
     WHERE cc.client_id=${clientId} ORDER BY r.received_at DESC LIMIT 1000
   `;
+  const activity = await sql`
+    SELECT metric_date::text date,COALESCE(SUM(emails_sent),0)::int emails_sent,COALESCE(SUM(replies),0)::int replies
+    FROM campaign_daily_metrics
+    WHERE client_id=${clientId} AND metric_date>=${startIso}::date AND metric_date<=${endIso}::date
+    GROUP BY metric_date ORDER BY metric_date
+  `;
   const comparison = Object.fromEntries(Object.keys(totals).map((key) => [key, pct(totals[key as keyof typeof totals], previous[key as keyof typeof previous])]));
-  return Response.json({ client, range, totals, syncedAt: snapshot?.synced_at ?? null, comparison, ratios: { positiveReply: totals.opportunities ? Math.round(totals.peopleContacted / totals.opportunities) : null, meeting: totals.meetingsBooked ? Math.round(totals.emailsSent / totals.meetingsBooked) : null }, campaigns, inbox, demoMode: process.env.DEMO_MODE !== "false" });
+  return Response.json({ client, range, totals, syncedAt: snapshot?.synced_at ?? null, comparison, ratios: { positiveReply: totals.opportunities ? Math.round(totals.peopleContacted / totals.opportunities) : null, meeting: totals.meetingsBooked ? Math.round(totals.emailsSent / totals.meetingsBooked) : null }, campaigns, inbox, activity, demoMode: process.env.DEMO_MODE !== "false" });
 }
