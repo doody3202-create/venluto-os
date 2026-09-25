@@ -24,7 +24,10 @@ const pacedSmartleadFetch = async (url: string, init?: RequestInit) => {
   // Smartlead applies one account-wide limit. Keep the range synchronizer from
   // sending a burst when several campaigns (and several 30-day chunks) match a
   // newly-created client workspace.
-  await wait(350);
+  // The account limit is reached after the first group of roughly ten calls.
+  // A one-second cadence keeps 60/90-day chunked syncs below that ceiling and
+  // is still fast enough to complete inside the route timeout.
+  await wait(1100);
   return response;
 };
 const dates = (range: RangeKey) => {
