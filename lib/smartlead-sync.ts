@@ -47,10 +47,6 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   if (!client) return { ok: false, skipped: true, reason: "Client workspace is missing" };
   const clientId = Number(client.id);
   const freshnessKey = `synced_at_${range}`;
-  // A campaign may be updated before a large sync finishes. Only a complete snapshot
-  // is allowed to mark the whole range fresh.
-  const [fresh] = await sql`SELECT synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
-  if (!force && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) return { ok: true, skipped: true, reason: "fresh" };
 
   const discovery = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`);
   if (!discovery.ok) throw new Error(`Smartlead campaign discovery failed (${discovery.status})`);
@@ -78,6 +74,14 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
     ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
   });
   console.info("[Smartlead sync] opportunities reconciled",{client:client.name,opportunityRepliesSynced});
+
+  // Campaign analytics may be cached, but the operational opportunity inbox must
+  // always reconcile first. Otherwise a fresh reporting snapshot makes Tasks and
+  // CRM incorrectly appear empty until the analytics cache expires.
+  const [fresh] = await sql`SELECT synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
+  if (!force && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
+    return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced };
+  }
 
   let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
