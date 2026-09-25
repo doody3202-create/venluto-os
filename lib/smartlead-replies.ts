@@ -57,7 +57,7 @@ export async function syncSmartleadOpportunityReplies(args: {
 
     while (offset < 5000) {
       const response = await fetch(
-        `https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=true`,
+        `https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=false`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },

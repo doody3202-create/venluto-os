@@ -60,6 +60,25 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes(clientNeedle));
   console.info("[Smartlead sync] campaigns discovered", { all: raw.length, client:client.name, matched:campaigns.length, range });
 
+  // Opportunity ingestion must not depend on the much larger analytics sync.
+  // Register every discovered campaign first, then reconcile the current
+  // Smartlead opportunity categories even if a later analytics request is
+  // rate-limited or fails.
+  for (const campaign of campaigns) {
+    const externalId=String(campaign.id??campaign.campaign_id??"");
+    if(!externalId)continue;
+    const[row]=await sql`INSERT INTO campaigns(provider,external_id,name) VALUES ('smartlead',${externalId},${String(campaign.name??`Smartlead ${externalId}`)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name RETURNING id`;
+    await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${clientId},${row.id},${`name:${client.name}`}) ON CONFLICT DO NOTHING`;
+  }
+  const [opportunityOwner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
+  const opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
+    apiKey,
+    campaignIds: campaigns.map(campaign=>Number(campaign.id??campaign.campaign_id)).filter(Number.isFinite),
+    clientId,
+    ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
+  });
+  console.info("[Smartlead sync] opportunities reconciled",{client:client.name,opportunityRepliesSynced});
+
   let synced = 0;
   const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
   const window = dates(range), dateWindows = windows(range);
@@ -149,17 +168,6 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   // Seed each workspace's Inbox/CRM from Smartlead's current opportunity
   // categories. Future changes still arrive through the account webhook; this
   // backfill makes a newly-created client workspace useful immediately.
-  let opportunityRepliesSynced = 0;
-  if (range === "30d") {
-    const [owner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
-    opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
-      apiKey,
-      campaignIds: completed.map(({ externalId }) => Number(externalId)).filter(Number.isFinite),
-      clientId,
-      ownerId: owner?.id ? Number(owner.id) : null,
-    });
-  }
-
   if (range === "all") {
     const [allTime] = await sql`
       SELECT COUNT(DISTINCT r.id)::int opportunities
