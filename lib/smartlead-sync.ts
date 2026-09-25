@@ -1,5 +1,4 @@
 import { sql } from "./db";
-import { syncSmartleadOpportunityReplies } from "./smartlead-replies";
 
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 type Json = Record<string, unknown>;
@@ -12,17 +11,10 @@ const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "p
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let nextSmartleadRequestAt = 0;
 const smartleadFetch = async (url: string) => {
-  let response: Response | null = null;
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const delay = Math.max(0, nextSmartleadRequestAt - Date.now());
-    if (delay) await wait(delay);
-    nextSmartleadRequestAt = Date.now() + 350;
-    response = await fetch(url, { cache: "no-store" });
-    if (response.ok || response.status !== 429) return response;
-    const retryAfter = Number(response.headers.get("retry-after") ?? 0);
-    await wait(retryAfter > 0 ? retryAfter * 1000 : Math.min(15_000, 2_000 * 2 ** attempt));
-  }
-  return response!;
+  const delay = Math.max(0, nextSmartleadRequestAt - Date.now());
+  if (delay) await wait(delay);
+  nextSmartleadRequestAt = Date.now() + 500;
+  return fetch(url, { cache: "no-store" });
 };
 const dates = (range: RangeKey) => {
   const days = range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : 30;
@@ -151,17 +143,5 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   }
 
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(totals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
-  let opportunityRepliesSynced = 0;
-  const [recentOpportunitySync] = await sql`SELECT 1 FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key<>${range} AND synced_at>NOW()-INTERVAL '2 minutes' LIMIT 1`;
-  if (!recentOpportunitySync) {
-    const [opportunityOwner] = await sql`SELECT id FROM owners WHERE LOWER(email)=LOWER(${process.env.APP_USER ?? "vlad@venlutogroup.com"}) LIMIT 1`;
-    opportunityRepliesSynced = await syncSmartleadOpportunityReplies({
-      apiKey,
-      campaignIds: campaigns.map(campaign=>Number(campaign.id??campaign.campaign_id)).filter(Number.isFinite),
-      clientId,
-      ownerId: opportunityOwner?.id ? Number(opportunityOwner.id) : null,
-    });
-  }
-  console.info("[Smartlead sync] opportunities reconciled",{client:client.name,opportunityRepliesSynced});
-  return { ok: true, synced, opportunityRepliesSynced, opportunities: totals.opportunities, totals, range };
+  return { ok: true, synced, opportunityRepliesSynced: 0, opportunities: totals.opportunities, totals, range };
 }
