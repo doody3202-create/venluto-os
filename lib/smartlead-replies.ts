@@ -1,6 +1,7 @@
 import { sql } from "./db";
 
 type InboxRow = {
+  id?: string | number;
   lead_category_id?: number;
   lead_first_name?: string;
   lead_last_name?: string;
@@ -10,6 +11,10 @@ type InboxRow = {
   email_campaign_id?: number | string;
   email_campaign_name?: string;
   last_reply_time?: string;
+  lead?: { email?: string; first_name?: string; last_name?: string; company?: string };
+  campaign?: { id?: number | string; name?: string };
+  category?: { id?: number; name?: string };
+  last_message?: { id?: string | number; body?: string; received_at?: string };
   email_history?: Array<{
     stats_id?: number | string;
     message_id?: string;
@@ -85,16 +90,16 @@ export async function syncSmartleadOpportunityReplies(args: {
       const rows = payload.data ?? payload.messages ?? [];
 
       for (const row of rows) {
-        const categoryName = categoryNames[Number(row.lead_category_id)];
-        const email = String(row.lead_email ?? "").trim().toLowerCase();
-        const externalCampaignId = String(row.email_campaign_id ?? "");
+        const categoryName = categoryNames[Number(row.category?.id ?? row.lead_category_id)] ?? row.category?.name;
+        const email = String(row.lead?.email ?? row.lead_email ?? "").trim().toLowerCase();
+        const externalCampaignId = String(row.campaign?.id ?? row.email_campaign_id ?? "");
         if (!categoryName || !email || !externalCampaignId) continue;
 
         const domain = email.split("@")[1] ?? "unknown.local";
         const [company] = await sql`
           INSERT INTO companies(name,domain)
-          VALUES (${domain},${domain})
-          ON CONFLICT(domain) DO UPDATE SET name=companies.name
+          VALUES (${row.lead?.company || domain},${domain})
+          ON CONFLICT(domain) DO UPDATE SET name=CASE WHEN companies.name=companies.domain AND EXCLUDED.name<>'' THEN EXCLUDED.name ELSE companies.name END
           RETURNING id
         `;
         const [campaign] = await sql`
@@ -105,12 +110,15 @@ export async function syncSmartleadOpportunityReplies(args: {
 
         const [prospect] = await sql`
           INSERT INTO prospects(first_name,last_name,email,normalized_email,source,status,owner_id,company_id,next_action,deadline_at)
-          VALUES (${row.lead_first_name ?? ""},${row.lead_last_name ?? ""},${email},${email},'smartlead','action_due',${ownerId},${company.id},'Reply to opportunity',NOW()+INTERVAL '5 minutes')
+          VALUES (${row.lead?.first_name ?? row.lead_first_name ?? ""},${row.lead?.last_name ?? row.lead_last_name ?? ""},${email},${email},'smartlead','action_due',${ownerId},${company.id},'Reply to opportunity',NOW()+INTERVAL '5 minutes')
           ON CONFLICT(normalized_email) DO UPDATE SET
             first_name=CASE WHEN EXCLUDED.first_name<>'' THEN EXCLUDED.first_name ELSE prospects.first_name END,
             last_name=CASE WHEN EXCLUDED.last_name<>'' THEN EXCLUDED.last_name ELSE prospects.last_name END,
             company_id=EXCLUDED.company_id,
             owner_id=COALESCE(prospects.owner_id,EXCLUDED.owner_id),
+            status=CASE WHEN prospects.status IN ('not_relevant','opportunity','replied_positive') THEN 'action_due' ELSE prospects.status END,
+            next_action=CASE WHEN prospects.status IN ('not_relevant','opportunity','replied_positive') THEN 'Reply to opportunity' ELSE prospects.next_action END,
+            deadline_at=CASE WHEN prospects.status IN ('not_relevant','opportunity','replied_positive') THEN NOW()+INTERVAL '5 minutes' ELSE prospects.deadline_at END,
             updated_at=NOW()
           RETURNING id
         `;
@@ -119,13 +127,15 @@ export async function syncSmartleadOpportunityReplies(args: {
           .reverse()
           .find((message) => String(message.type ?? "").toUpperCase() === "REPLY");
         const replyId = String(
-          reply?.message_id ??
+          row.last_message?.id ??
+            row.id ??
+            reply?.message_id ??
             reply?.stats_id ??
             row.email_lead_map_id ??
             `${externalCampaignId}:${email}:${row.last_reply_time ?? ""}`,
         );
-        const body = plain(String(reply?.email_body ?? "")) || "Reply available in Smartlead";
-        const receivedAt = reply?.time ?? row.last_reply_time ?? new Date().toISOString();
+        const body = plain(String(row.last_message?.body ?? reply?.email_body ?? "")) || "Reply available in Smartlead";
+        const receivedAt = row.last_message?.received_at ?? reply?.time ?? row.last_reply_time ?? new Date().toISOString();
 
         await sql`
           INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at)
