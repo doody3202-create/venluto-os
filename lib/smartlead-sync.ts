@@ -35,11 +35,12 @@ const dateChunks = (range: Exclude<RangeKey, "all">) => {
   }
   return chunks;
 };
-const smartleadOpportunityCounts = async (apiKey: string, campaignIds: number[], range: RangeKey) => {
-  const counts = new Map<string, number>();
-  const window = range === "all" ? null : dates(range);
-  const start = window ? new Date(`${window.start}T00:00:00.000Z`).getTime() : Number.NEGATIVE_INFINITY;
-  const end = window ? new Date(`${window.end}T00:00:00.000Z`).getTime() + 86400000 : Number.POSITIVE_INFINITY;
+const opportunityRangeSyncs = new Map<number, Promise<Map<RangeKey, Map<string, number>>>>();
+const smartleadOpportunityCounts = (apiKey: string, campaignIds: number[], clientId: number) => {
+  const current = opportunityRangeSyncs.get(clientId);
+  if (current) return current;
+  const run = (async () => {
+  const rowsByCampaign: Array<{ campaignId: string; repliedAt: number }> = [];
   for (let index = 0; index < campaignIds.length; index += 5) {
     const group = campaignIds.slice(index, index + 5);
     let offset = 0;
@@ -57,15 +58,30 @@ const smartleadOpportunityCounts = async (apiKey: string, campaignIds: number[],
       const rows = ((payload.data ?? payload.messages ?? []) as Json[]);
       for (const row of rows) {
         const repliedAt = new Date(String(row.last_reply_time ?? "")).getTime();
-        if (!Number.isFinite(repliedAt) || repliedAt < start || repliedAt >= end) continue;
         const campaignId = String(row.email_campaign_id ?? (row.campaign as Json | undefined)?.id ?? "");
-        if (campaignId) counts.set(campaignId, (counts.get(campaignId) ?? 0) + 1);
+        if (campaignId && Number.isFinite(repliedAt)) rowsByCampaign.push({ campaignId, repliedAt });
       }
       if (rows.length < 20) break;
       offset += rows.length;
     }
   }
-  return counts;
+  const result = new Map<RangeKey, Map<string, number>>();
+  for (const range of ["7d", "30d", "60d", "90d", "all"] as RangeKey[]) {
+    const counts = new Map<string, number>();
+    const window = range === "all" ? null : dates(range);
+    const start = window ? new Date(`${window.start}T00:00:00.000Z`).getTime() : Number.NEGATIVE_INFINITY;
+    const end = window ? new Date(`${window.end}T00:00:00.000Z`).getTime() + 86400000 : Number.POSITIVE_INFINITY;
+    for (const row of rowsByCampaign) {
+      if (row.repliedAt < start || row.repliedAt >= end) continue;
+      counts.set(row.campaignId, (counts.get(row.campaignId) ?? 0) + 1);
+    }
+    result.set(range, counts);
+  }
+  return result;
+  })();
+  opportunityRangeSyncs.set(clientId, run);
+  void run.finally(() => opportunityRangeSyncs.delete(clientId));
+  return run;
 };
 export function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
   return performSmartleadCampaignSync(force, range, requestedClientId);
@@ -137,13 +153,20 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const [fresh] = await sql`SELECT synced_at,metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   const freshMetrics = typeof fresh?.metrics_json === "string" ? JSON.parse(fresh.metrics_json) : fresh?.metrics_json as Json | undefined;
   const hasSentVolume = n(freshMetrics?.peopleContacted) > 0 || n(freshMetrics?.emailsSent) > 0 || campaigns.length === 0;
-  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v6";
+  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v7";
   if (!force && hasSentVolume && hasDatedOpportunities && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
   const campaignIds = campaigns.map(campaign => Number(campaign.id ?? campaign.campaign_id)).filter(Number.isFinite);
-  const opportunityCounts = await smartleadOpportunityCounts(apiKey, campaignIds, range);
+  const opportunityCountsByRange = await smartleadOpportunityCounts(apiKey, campaignIds, clientId);
+  for (const selectedRange of ["7d", "30d", "60d", "90d", "all"] as RangeKey[]) {
+    const selectedCounts = opportunityCountsByRange.get(selectedRange) ?? new Map<string, number>();
+    const selectedTotal = [...selectedCounts.values()].reduce((sum, value) => sum + value, 0);
+    const opportunityMetrics = { positiveReplies: selectedTotal, opportunities: selectedTotal, opportunitySource: "smartlead-categories-v7" };
+    await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${selectedRange},${sql.json(opportunityMetrics)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=campaign_analytics_snapshots.metrics_json||EXCLUDED.metrics_json,synced_at=NOW()`;
+  }
+  const opportunityCounts = opportunityCountsByRange.get(range) ?? new Map<string, number>();
   const opportunityTotal = [...opportunityCounts.values()].reduce((sum, value) => sum + value, 0);
   const earlyTotals: {
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
@@ -156,7 +179,7 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
     replies: n(freshMetrics?.replies),
     positiveReplies: opportunityTotal,
     opportunities: opportunityTotal,
-    opportunitySource: "smartlead-categories-v6",
+    opportunitySource: "smartlead-categories-v7",
   };
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(earlyTotals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
 
@@ -164,7 +187,7 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
     replies: number; positiveReplies: number; opportunities: number;
     opportunitySource: string; opportunityRecordsSource?: string;
-  } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v6" };
+  } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
     const results = await Promise.all(campaigns.map(async (campaign) => {
