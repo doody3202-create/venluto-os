@@ -35,3 +35,69 @@ table{color:#211c3b}th,.performanceTable th{background:#f1eef9;color:#716a86}td{
 .workspace{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:14px 0 4px}.workspace>div{display:none}.workspace .avatar,.workspace .signOut{flex:none}
 .salesFramework{background:#fff;border:1px solid #d9d1f2;border-radius:16px;box-shadow:0 15px 36px rgba(51,37,105,.08);overflow:hidden}.salesFramework>summary{list-style:none;cursor:pointer;padding:22px 24px;background:linear-gradient(135deg,#f8f5ff,#eef3ff)}.salesFramework>summary::-webkit-details-marker{display:none}.salesFramework>summary span{font-size:8px;font-weight:900;letter-spacing:.13em;color:#6746df}.salesFramework>summary h2{margin:7px 0;color:#17142e;font:600 22px Fraunces,Georgia,serif}.salesFramework>summary strong{color:#6746df;font-size:10px}.salesFramework>summary em{display:block;margin-top:13px;color:#6746df;font-size:8px;font-style:normal;font-weight:900}.salesFramework[open]>summary{border-bottom:1px solid #ddd7f2}.salesFrameworkBody{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:18px;background:#f8f7fc}.salesFrameworkBody section,.salesFrameworkBody aside{background:#fff;border:1px solid #e2dcf2;border-radius:12px;padding:18px;color:#39334d}.salesFrameworkBody section>b,.salesFrameworkBody aside>b{font-size:8px;letter-spacing:.12em;color:#6746df}.salesFrameworkBody h3{margin:6px 0 9px;color:#17142e;font:600 17px Fraunces,Georgia,serif}.salesFrameworkBody p,.salesFrameworkBody li{font-size:9px;line-height:1.6}.salesFrameworkBody ol,.salesFrameworkBody ul{padding-left:18px}.salesFrameworkBody li{margin:5px 0}.salesFrameworkBody blockquote{margin:14px 0;padding:12px;border-left:3px solid #6746df;background:#f5f1ff;color:#4c4367;font-size:9px;line-height:1.55}.salesFrameworkBody aside{grid-column:1/-1;background:linear-gradient(135deg,#2b1b5d,#5841af);color:#ede8ff}.salesFrameworkBody aside h3{color:#fff}.salesFrameworkBody aside>b{color:#cbbfff}@media(max-width:1050px){.salesFrameworkBody{grid-template-columns:1fr}.salesFrameworkBody aside{grid-column:auto}}
 .funnelRoster{background:rgba(255,255,255,.94);border:1px solid #ddd7f2;border-radius:16px;box-shadow:0 14px 35px rgba(51,37,105,.08);overflow:hidden}.funnelRoster>header{display:flex;justify-content:space-between;align-items:end;padding:20px 22px;border-bottom:1px solid #e7e2f3}.funnelRoster>header span{font-size:8px;font-weight:900;letter-spacing:.13em;color:#6746df}.funnelRoster>header h2{margin:5px 0 0;font:600 21px Fraunces,Georgia,serif;color:#17142e}.funnelRoster>header small{color:#817a91}.funnelRoster>div{display:grid;grid-template-columns:repeat(3,1fr)}.funnelRoster>div>article{padding:17px 18px;min-width:0}.funnelRoster>div>article+article{border-left:1px solid #e7e2f3}.funnelRosterTitle{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.funnelRosterTitle strong{font-size:10px;color:#17142e}.funnelRosterTitle b{display:grid;place-items:center;min-width:25px;height:25px;padding:0 7px;border-radius:999px;background:#eee9ff;color:#6746df;font-size:10px}.funnelLead{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:9px;align-items:start;padding:10px 0;border-top:1px solid #eeeaf5}.funnelLead>i{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,#8060e8,#5042bd);color:#fff;font-size:8px;font-style:normal;font-weight:900}.funnelLead>span{min-width:0}.funnelLead>span strong,.funnelLead>span small,.funnelLead>span em{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.funnelLead>span strong{font-size:9px;color:#17142e}.funnelLead>span small,.funnelLead>span em{font-size:7px;color:#817a91;margin-top:3px}.funnelLead>span em{font-style:normal;color:#6746df}.funnelLead time{text-align:right;color:#6f687f;font-size:7px;white-space:nowrap}.funnelLead time b{display:block;margin-top:5px;color:#13845f;font-size:8px}.funnelRoster article>p{color:#918ba2;font-size:8px}.funnelRoster .meeting_booked{background:#fbfaff}.funnelRoster .showed{background:#f7f5ff}.funnelRoster .closed_won{background:#f3f9f7}@media(max-width:1050px){.funnelRoster>div{grid-template-columns:1fr}.funnelRoster>div>article+article{border-left:0;border-top:1px solid #e7e2f3}}@media(max-width:620px){.funnelRoster>header{align-items:start;flex-direction:column;gap:6px}}
+
+/* Phone layout — bottom navigation, touch-sized controls and stackable data surfaces. */
+@media(max-width:620px){
+ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
+ body{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
+ .shell{display:block;min-width:0}
+ .sidebar{position:fixed;inset:auto 0 0 0;width:100%;height:calc(64px + env(safe-area-inset-bottom));padding:7px 8px env(safe-area-inset-bottom);display:block;border:0;border-top:1px solid rgba(159,139,255,.28);z-index:100;box-shadow:0 -12px 32px rgba(35,24,84,.16)}
+ .sidebar .brand,.sidebar .workspace{display:none}
+ .sidebar nav{display:flex;flex-direction:row;gap:5px;width:100%;height:50px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+ .sidebar nav::-webkit-scrollbar{display:none}
+ .sidebar nav button{position:relative;flex:0 0 50px;width:50px;height:48px;min-height:48px;padding:0;display:grid;place-items:center;border-radius:12px;font-size:0;touch-action:manipulation}
+ .sidebar nav button span{width:auto;font-size:20px;line-height:1;color:inherit}
+ .sidebar nav button i{position:absolute;top:1px;right:1px;min-width:16px;height:16px;padding:0 4px;display:grid;place-items:center;border:2px solid #171238;font-size:8px}
+ .content{grid-column:auto;width:100%;max-width:none;min-width:0;margin-left:0;padding:18px 12px 28px}
+ .content>header{display:flex;align-items:stretch;flex-direction:column;margin-bottom:20px;gap:14px}
+ .content>header h1{font-size:30px;line-height:1.05}
+ .content>header .subhead{font-size:12px;line-height:1.45}
+ .portalHeader{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
+ .portalHeader select{width:100%;min-width:0;height:44px;font-size:12px}
+ .demoBadge{min-height:44px;white-space:nowrap}
+ .overviewToolbar{align-items:stretch;gap:10px}
+ .overviewToolbar>div:last-child{width:100%;overflow-x:auto}
+ .overviewToolbar button{flex:1;min-width:58px;min-height:42px;padding:8px 10px}
+ .overviewMetrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .overviewMetrics article{min-height:116px;padding:15px}
+ .overviewMetrics article>strong{font-size:26px}
+ .ratioStrip{grid-template-columns:1fr 1fr;gap:8px}
+ .performanceTable,.tableCard{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .performanceTable>div,.tableToolbar{position:sticky;left:0;min-width:min(100%,340px)}
+ .performanceTable table,.tableCard table{min-width:760px}
+ .tableToolbar{align-items:stretch;flex-direction:column;gap:9px}
+ .tableToolbar input{width:100%;min-height:44px}
+ .activityChart{padding:17px 14px 12px}.activityChart svg{height:135px}.chartDates{padding:0 6px}
+ .replyCard{grid-template-columns:38px minmax(0,1fr);align-items:start;padding:14px 13px;gap:10px}
+ .replyCard .cardActions{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);width:100%;min-width:0}
+ .replyCard .cardActions button,.replyCard .cardActions a{min-height:42px}
+ .replyTop{flex-direction:column;gap:7px}.replyTop .actionDue{align-self:flex-start}
+ .meta{align-items:flex-start;flex-wrap:wrap}.campaign{order:3;margin-left:0;max-width:100%;width:100%}
+ .readOnlyInbox article{padding:13px}.readOnlyInbox p{overflow-wrap:anywhere}
+ .inboxToolbar,.searchControls,.crmToolbar,.crmFilters{width:100%;align-items:stretch;flex-direction:column}
+ .searchControls input,.crmToolbar input,.crmFilters input,.crmFilters select,.inboxToolbar select{width:100%;min-width:0;min-height:44px}
+ .opportunityDatabase>header{align-items:flex-start;padding:16px}
+ .opportunityRows article{grid-template-columns:1fr;gap:11px;padding:15px 14px}
+ .opportunityIdentity{width:100%;min-width:0}.opportunityIdentity span{min-width:0}.opportunityIdentity strong,.opportunityIdentity small,.opportunityIdentity em{overflow-wrap:anywhere}
+ .opportunityTag{grid-column:1;width:100%;min-height:44px}
+ .opportunityValue,.opportunityEdit{grid-column:1}
+ .opportunityEdit{min-height:40px;text-align:left}
+ .taskComposer form{flex-direction:column}.taskComposer input,.taskComposer form button{min-height:44px}.taskComposer>div{grid-template-columns:1fr}
+ .dailyPriorities{grid-template-columns:1fr}.overdueOnly>header{padding:17px}
+ .workspaceSelector,.tamHero,.jobTop,.exportCard,.tamFoot{align-items:stretch;flex-direction:column}
+ .workspaceSelector>div:last-child,.tamHeroTools{width:100%;align-items:stretch;flex-direction:column}
+ .workspaceSelector select,.workspaceSelector button,.workspaceSelector a,.tamDownload{width:100%;min-height:44px;display:flex;align-items:center;justify-content:center}
+ .tamStats.compact{grid-template-columns:1fr 1fr}
+ .segmentRows article{grid-template-columns:1fr auto}.segmentRows article button{grid-column:1/-1;min-height:40px}
+ .segmentPreview{max-width:100%;overflow:hidden}.segmentPreview header{align-items:flex-start;gap:10px;flex-direction:column}.segmentPreview header button{min-height:42px}
+ .playbookForm{grid-template-columns:1fr}.playbookForm select,.playbookForm input,.playbookForm textarea,.playbookForm button{min-height:44px}.playbookForm textarea,.playbookForm input:last-of-type{grid-column:1}
+ .diagnosticHeader,.salesFramework>summary,.libraryPanel,.roadmapPanel{padding:18px}.diagnosticHeader h2,.salesFramework>summary h2{font-size:21px}
+ .dealEditor{grid-template-columns:1fr}.dealEditor button{grid-column:1}.dealEditor input{min-height:44px}
+ .drawerBackdrop{align-items:flex-end}.drawer{width:100%;height:min(92dvh,760px);padding:25px 16px calc(22px + env(safe-area-inset-bottom));border-radius:20px 20px 0 0}
+ .drawer dl div{grid-template-columns:1fr;gap:5px}.detailActions{display:grid;grid-template-columns:1fr 1fr}.detailActions>*{min-height:44px;display:flex;align-items:center;justify-content:center}
+ .credentialBackdrop,.nativeDeleteModal{padding:12px}.credentialCard{padding:21px 17px;max-height:90dvh;overflow:auto}.deleteWorkspaceActions{align-items:stretch;flex-direction:column}.deleteWorkspaceActions>*{width:100%}.deleteWorkspaceActions button,.nativeNoButton{width:100%;min-height:44px}
+ .errorList article{grid-template-columns:35px minmax(0,1fr);align-items:start}.errorActions{grid-column:1/-1}.errorActions button{flex:1;min-height:42px}
+ .toast{left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));padding:13px;font-size:11px}
+ button,select,input,a{touch-action:manipulation}
+}
+@media(max-width:350px){.overviewMetrics,.ratioStrip,.tamStats.compact{grid-template-columns:1fr}.portalHeader{grid-template-columns:1fr}.demoBadge{justify-content:center}}
