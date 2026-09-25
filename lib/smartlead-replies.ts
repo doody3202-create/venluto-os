@@ -15,6 +15,13 @@ type InboxRow = {
   campaign?: { id?: number | string; name?: string };
   category?: { id?: number; name?: string };
   last_message?: { id?: string | number; body?: string; received_at?: string };
+  message_history?: Array<{
+    id?: string | number;
+    direction?: string;
+    body?: string;
+    received_at?: string;
+    sent_at?: string;
+  }>;
   email_history?: Array<{
     stats_id?: number | string;
     message_id?: string;
@@ -57,7 +64,7 @@ export async function syncSmartleadOpportunityReplies(args: {
 
     while (offset < 5000) {
       const response = await fetch(
-        `https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=false`,
+        `https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=true`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -126,16 +133,20 @@ export async function syncSmartleadOpportunityReplies(args: {
         const reply = [...(row.email_history ?? [])]
           .reverse()
           .find((message) => String(message.type ?? "").toUpperCase() === "REPLY");
+        const historyReply = [...(row.message_history ?? [])]
+          .reverse()
+          .find((message) => String(message.direction ?? "").toLowerCase() === "inbound");
         const replyId = String(
           row.last_message?.id ??
+            historyReply?.id ??
             row.id ??
             reply?.message_id ??
             reply?.stats_id ??
             row.email_lead_map_id ??
             `${externalCampaignId}:${email}:${row.last_reply_time ?? ""}`,
         );
-        const body = plain(String(row.last_message?.body ?? reply?.email_body ?? "")) || "Reply available in Smartlead";
-        const receivedAt = row.last_message?.received_at ?? reply?.time ?? row.last_reply_time ?? new Date().toISOString();
+        const body = plain(String(row.last_message?.body ?? historyReply?.body ?? reply?.email_body ?? "")) || "Reply available in Smartlead";
+        const receivedAt = row.last_message?.received_at ?? historyReply?.received_at ?? historyReply?.sent_at ?? reply?.time ?? row.last_reply_time ?? new Date().toISOString();
 
         await sql`
           INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at)

@@ -8,6 +8,14 @@ const pick = (row: Json, keys: string[]) => {
   for (const key of keys) if (row[key] !== undefined && row[key] !== null) return n(row[key]);
   return 0;
 };
+const unwrapStats = (value: unknown): Json => {
+  if (Array.isArray(value)) return (value[0] as Json | undefined) ?? {};
+  const row = (value && typeof value === "object" ? value : {}) as Json;
+  if (Array.isArray(row.data)) return (row.data[0] as Json | undefined) ?? row;
+  if (row.data && typeof row.data === "object") return row.data as Json;
+  return row;
+};
+const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "positive_replies"]) || n((stats.campaign_lead_stats as Json | undefined)?.interested);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const smartleadFetch = async (url: string) => {
   let response: Response | null = null;
@@ -88,30 +96,31 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
   const window = dates(range), dateWindows = windows(range);
   const failedCampaigns: string[] = [];
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
-  for (let index = 0; index < campaigns.length; index += 6) {
-    const results = await Promise.all(campaigns.slice(index, index + 6).map(async (campaign) => {
+  for (let index = 0; index < campaigns.length; index += 4) {
+    const results = await Promise.all(campaigns.slice(index, index + 4).map(async (campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
       if (!externalId) return null;
       try {
         if (range === "all") {
           const response = await smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics?api_key=${encodeURIComponent(apiKey)}`);
           if (!response.ok) throw new Error(`all-time analytics rejected (${response.status})`);
-          const stats = await response.json() as Json;
-          return { campaign, externalId, stats: { ...stats, positive_reply_count: 0 } };
+          const stats = unwrapStats(await response.json());
+          return { campaign, externalId, stats };
         }
-        const parts = await Promise.all(dateWindows.map(async (dateWindow) => {
+        const parts: Array<{analytics:Json;positive:Json}> = [];
+        for (const dateWindow of dateWindows) {
           const suffix = `start_date=${dateWindow.start}&end_date=${dateWindow.end}&api_key=${encodeURIComponent(apiKey)}`;
           const [analyticsResponse, positiveResponse] = await Promise.all([
             smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/analytics-by-date?${suffix}`),
             smartleadFetch(`https://server.smartlead.ai/api/v1/campaigns/${externalId}/top-level-analytics-by-date?${suffix}`),
           ]);
           if (!analyticsResponse.ok || !positiveResponse.ok) throw new Error(`dated analytics rejected (${analyticsResponse.status}/${positiveResponse.status})`);
-          return { analytics: await analyticsResponse.json() as Json, positive: await positiveResponse.json() as Json };
-        }));
+          parts.push({ analytics: unwrapStats(await analyticsResponse.json()), positive: unwrapStats(await positiveResponse.json()) });
+        }
         const stats: Json = {};
         for (const part of parts) {
           for (const key of ["sent_count", "unique_sent_count", "reply_count", "total_reply_count", "non_ooo_reply_count"]) stats[key] = n(stats[key]) + n(part.analytics[key]);
-          stats.positive_reply_count = n(stats.positive_reply_count) + n(part.positive.positive_reply_count);
+          stats.positive_reply_count = n(stats.positive_reply_count) + positiveReplies(part.positive);
           stats.total_count = Math.max(n(stats.total_count), n(part.analytics.total_count));
         }
         return { campaign, externalId, stats };
@@ -131,7 +140,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
         emails_sent: pick(stats, ["sent_count", "emails_sent", "total_sent"]),
         uncontacted_leads: Math.max(0, pick(stats, ["total_count"]) - contacted),
         replies: pick(stats, ["reply_count", "replies", "total_replies"]),
-        positive_replies: pick(stats, ["positive_reply_count", "positive_replies"]),
+        positive_replies: positiveReplies(stats),
         total_leads: pick(stats, ["total_count"]),
       };
       totals.peopleContacted += values.people_contacted;
@@ -160,7 +169,7 @@ export async function syncVenlutoSmartleadCampaigns(force = false, range: RangeK
       emails_sent: pick(stats, ["sent_count", "emails_sent", "total_sent"]),
       uncontacted_leads: Math.max(0, pick(stats, ["total_count"]) - contacted),
       replies: pick(stats, ["reply_count", "replies", "total_replies"]),
-      positive_replies: pick(stats, ["positive_reply_count", "positive_replies"]),
+      positive_replies: positiveReplies(stats),
       total_leads: pick(stats, ["total_count"]),
     };
     const now = new Date().toISOString();
