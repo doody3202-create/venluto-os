@@ -9,12 +9,12 @@ const pick = (row: Json, keys: string[]) => {
 };
 const positiveReplies = (stats: Json) => pick(stats, ["positive_reply_count", "positive_replies"]) || n((stats.campaign_lead_stats as Json | undefined)?.interested);
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const smartleadFetch = async (url: string) => {
-  let response = await fetch(url, { cache: "no-store" });
+const smartleadFetch = async (url: string, init?: RequestInit) => {
+  let response = await fetch(url, { ...init, cache: "no-store" });
   if (response.status === 429) {
     const retryAfterSeconds = Math.max(1, Number(response.headers.get("retry-after") ?? 60) || 60);
     await wait(Math.min(65, retryAfterSeconds) * 1000);
-    response = await fetch(url, { cache: "no-store" });
+    response = await fetch(url, { ...init, cache: "no-store" });
   }
   return response;
 };
@@ -33,6 +33,38 @@ const dateChunks = (range: Exclude<RangeKey, "all">) => {
     cursor = new Date(chunkEnd.getTime() + 86400000);
   }
   return chunks;
+};
+const smartleadOpportunityCounts = async (apiKey: string, campaignIds: number[], range: RangeKey) => {
+  const counts = new Map<string, number>();
+  const window = range === "all" ? null : dates(range);
+  const start = window ? new Date(`${window.start}T00:00:00.000Z`).getTime() : Number.NEGATIVE_INFINITY;
+  const end = window ? new Date(`${window.end}T00:00:00.000Z`).getTime() + 86400000 : Number.POSITIVE_INFINITY;
+  for (let index = 0; index < campaignIds.length; index += 5) {
+    const group = campaignIds.slice(index, index + 5);
+    let offset = 0;
+    while (offset < 5000) {
+      const response = await smartleadFetch(
+        `https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=false`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ offset, limit: 100, filters: { emailStatus: "Replied", campaignId: group, leadCategories: { categoryIdsIn: [1, 2, 5] } }, sortBy: "REPLY_TIME_DESC" }),
+        },
+      );
+      if (!response.ok) throw new Error(`Smartlead opportunity analytics failed (${response.status}). Previous snapshot preserved.`);
+      const payload = await response.json() as Json;
+      const rows = ((payload.data ?? payload.messages ?? []) as Json[]);
+      for (const row of rows) {
+        const repliedAt = new Date(String(row.last_reply_time ?? "")).getTime();
+        if (!Number.isFinite(repliedAt) || repliedAt < start || repliedAt >= end) continue;
+        const campaignId = String(row.email_campaign_id ?? (row.campaign as Json | undefined)?.id ?? "");
+        if (campaignId) counts.set(campaignId, (counts.get(campaignId) ?? 0) + 1);
+      }
+      if (rows.length < 100) break;
+      offset += rows.length;
+    }
+  }
+  return counts;
 };
 let rangeSyncQueue: Promise<unknown> = Promise.resolve();
 export function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
@@ -73,11 +105,12 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const [fresh] = await sql`SELECT synced_at,metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   const freshMetrics = typeof fresh?.metrics_json === "string" ? JSON.parse(fresh.metrics_json) : fresh?.metrics_json as Json | undefined;
   const hasSentVolume = n(freshMetrics?.peopleContacted) > 0 || n(freshMetrics?.emailsSent) > 0 || campaigns.length === 0;
-  if (!force && hasSentVolume && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
+  const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v1";
+  if (!force && hasSentVolume && hasDatedOpportunities && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
-  const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0 };
+  const totals = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v1" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   if (campaigns.length) {
     const results = await Promise.all(campaigns.map(async (campaign) => {
@@ -106,6 +139,8 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
       return { campaign, externalId, stats };
     }));
     completed.push(...results.filter((result): result is { campaign: Json; externalId: string; stats: Json } => result !== null));
+    const opportunityCounts = await smartleadOpportunityCounts(apiKey, completed.map(({ externalId }) => Number(externalId)).filter(Number.isFinite), range);
+    for (const item of completed) item.stats.positive_reply_count = opportunityCounts.get(item.externalId) ?? 0;
     for (const { stats } of completed) {
       totals.peopleContacted += pick(stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
       totals.emailsSent += pick(stats, ["sent_count", "emails_sent", "total_sent"]);
