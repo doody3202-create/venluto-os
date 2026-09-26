@@ -174,3 +174,6 @@ table{color:#211c3b}th,.performanceTable th{background:#f1eef9;color:#716a86}td{
 @keyframes duePulse{0%{box-shadow:0 0 0 0 rgba(239,135,80,.38)}70%{box-shadow:0 0 0 7px rgba(239,135,80,0)}100%{box-shadow:0 0 0 0 rgba(239,135,80,0)}}
 @media(max-width:620px){.replyCard .cardActions{min-width:0}.replyCard .cardActions button{display:flex;justify-content:center;padding:8px}.replyCard .cardActions button i{width:23px;height:23px}.replyCard .cardActions button span{display:none}.replyCard .cardActions button:hover{transform:translateY(-2px)}.positiveReplyCard footer{align-items:flex-start;flex-direction:column}.positiveReplyCard footer>span{max-width:100%}.positiveReplyCard footer button{width:100%;min-height:42px}.positiveReplyHead{align-items:flex-start;flex-direction:column;gap:3px}}
 @media(prefers-reduced-motion:reduce){.replyCard,.positiveReplyCard,.actionDue.overdue:before{animation:none!important}.replyCard,.positiveReplyCard,.replyCard .cardActions button,.positiveReplyCard footer button{transition:none!important}}
+
+/* Keep collapsed-sidebar labels above every page surface. */
+@media(min-width:621px){.sidebar{z-index:500;overflow:visible}.sidebar nav{overflow:visible}.sidebar nav button{isolation:auto}.sidebar nav button::after{z-index:510;box-shadow:0 12px 30px rgba(34,22,83,.28)}.content{position:relative;z-index:1}}
