@@ -20,14 +20,10 @@ const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
     if (!discovery.ok) return result;
     const payload = await discovery.json() as Record<string, unknown> | Array<Record<string, unknown>>;
     const all = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Array<Record<string, unknown>>;
-    const windowStart = new Date(`${startDate}T00:00:00.000Z`).getTime();
-    const matched = all.filter(campaign => {
-      if (!String(campaign.name ?? "").toLowerCase().includes(keyword.toLowerCase())) return false;
-      if (range !== "7d") return true;
-      const createdAt = new Date(String(campaign.created_at ?? campaign.createdAt ?? "")).getTime();
-      const state = String(campaign.status ?? campaign.state ?? "").toLowerCase();
-      return (Number.isFinite(createdAt) && createdAt >= windowStart) || state === "active" || state === "started" || state === "running";
-    });
+    // A paused or completed campaign can still have sends inside the selected
+    // reporting window. Match by client name only; the date endpoint is what
+    // determines whether that campaign contributes to this range.
+    const matched = all.filter(campaign => String(campaign.name ?? "").toLowerCase().includes(keyword.toLowerCase()));
     const windows: Array<{start:string;end:string}> = [];
     if (range === "all") windows.push({ start: "", end: "" });
     else for (let cursor = new Date(`${startDate}T00:00:00Z`), final = new Date(`${endDate}T00:00:00Z`); cursor <= final;) {
@@ -192,8 +188,10 @@ export async function GET(request: Request) {
     opportunities: campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
   };
   const [snapshot] = await sql`SELECT metrics_json,synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
+  let snapshotIsComplete = false;
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
+    snapshotIsComplete = metrics.analyticsComplete === true;
     const [thirtyDaySnapshot] = isWiderThanThirtyDays
       ? await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key='30d'`
       : [];
@@ -215,7 +213,7 @@ export async function GET(request: Request) {
     };
   }
   const clientKeyword = String(client.campaign_match_keyword ?? client.name);
-  const needsLiveRange = (range === "7d" && totals.peopleContacted === 0)
+  const needsLiveRange = totals.peopleContacted === 0 || !snapshotIsComplete
     || (clientKeyword.toLowerCase() === "celadonsoft" && isWiderThanThirtyDays);
   if (needsLiveRange && campaigns.length) {
     const live = await liveRangeCampaigns(clientKeyword, range);

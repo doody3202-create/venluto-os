@@ -195,14 +195,9 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
       AND NULLIF(metadata_json->>${freshnessKey},'')::timestamptz > NOW() - INTERVAL '10 minutes'
   `;
   const recentlySynced = new Set(recentlySyncedRows.map(row => String(row.external_id)));
-  const candidateCampaigns = range === "7d"
-    ? campaigns.filter(campaign => {
-        const createdAt = new Date(String(campaign.created_at ?? campaign.createdAt ?? "")).getTime();
-        const state = String(campaign.status ?? campaign.state ?? "").toLowerCase();
-        return (Number.isFinite(createdAt) && createdAt >= new Date(`${dates("7d").start}T00:00:00.000Z`).getTime())
-          || state === "active" || state === "started" || state === "running";
-      })
-    : campaigns;
+  // Status is not a reporting-period filter: paused and completed campaigns
+  // may still contain sends inside the requested date window.
+  const candidateCampaigns = campaigns;
   const analyticsCampaigns = candidateCampaigns.filter(campaign => !recentlySynced.has(String(campaign.id ?? campaign.campaign_id ?? "")));
   if (analyticsCampaigns.length) {
     const jobs = analyticsCampaigns.flatMap((campaign) => {
