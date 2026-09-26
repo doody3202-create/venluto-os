@@ -156,7 +156,8 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const freshMetrics = typeof fresh?.metrics_json === "string" ? JSON.parse(fresh.metrics_json) : fresh?.metrics_json as Json | undefined;
   const hasSentVolume = n(freshMetrics?.peopleContacted) > 0 || n(freshMetrics?.emailsSent) > 0 || campaigns.length === 0;
   const hasDatedOpportunities = freshMetrics?.opportunitySource === "smartlead-categories-v7";
-  if (!force && hasSentVolume && hasDatedOpportunities && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
+  const analyticsComplete = freshMetrics?.analyticsComplete === true;
+  if (!force && hasSentVolume && hasDatedOpportunities && analyticsComplete && fresh?.synced_at && Date.now() - new Date(String(fresh.synced_at)).getTime() < 15 * 60_000) {
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
@@ -169,7 +170,7 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const earlyTotals: {
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
     replies: number; positiveReplies: number; opportunities: number;
-    opportunitySource: string; opportunityRecordsSource?: string;
+    opportunitySource: string; opportunityRecordsSource?: string; analyticsComplete: boolean;
   } = {
     peopleContacted: n(freshMetrics?.peopleContacted),
     emailsSent: n(freshMetrics?.emailsSent),
@@ -178,14 +179,15 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
     positiveReplies: opportunityTotal,
     opportunities: opportunityTotal,
     opportunitySource: "smartlead-categories-v7",
+    analyticsComplete: false,
   };
   await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(earlyTotals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
 
   const totals: {
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
     replies: number; positiveReplies: number; opportunities: number;
-    opportunitySource: string; opportunityRecordsSource?: string;
-  } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7" };
+    opportunitySource: string; opportunityRecordsSource?: string; analyticsComplete: boolean;
+  } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7", analyticsComplete: true };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
   const recentlySyncedRows = await sql`
     SELECT external_id FROM campaigns
