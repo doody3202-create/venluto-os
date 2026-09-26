@@ -177,3 +177,5 @@ table{color:#211c3b}th,.performanceTable th{background:#f1eef9;color:#716a86}td{
 
 /* Keep collapsed-sidebar labels above every page surface. */
 @media(min-width:621px){.sidebar{z-index:500;overflow:visible}.sidebar nav{overflow:visible}.sidebar nav button{isolation:auto}.sidebar nav button::after{z-index:510;box-shadow:0 12px 30px rgba(34,22,83,.28)}.content{position:relative;z-index:1}}
+.workspaceSelector input[type="password"]{min-width:205px;border:1px solid #dcd6ef;border-radius:9px;background:#fff;padding:10px 12px;color:#211c3b;font-size:9px}.workspaceSelector input[type="password"]:focus{outline:2px solid rgba(103,70,223,.22);border-color:#8d78e4}
+@media(max-width:620px){.workspaceSelector input[type="password"]{width:100%;min-width:0;min-height:44px}}
