@@ -134,7 +134,9 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   const payload = await discovery.json() as Json | Json[];
   const raw = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Json[];
   const clientNeedle=String(client.campaign_match_keyword??client.name).toLowerCase();
-  const campaigns = raw.filter((campaign) => String(campaign.name ?? "").toLowerCase().includes(clientNeedle));
+  const campaigns = raw
+    .filter((campaign) => String(campaign.name ?? "").toLowerCase().includes(clientNeedle))
+    .sort((a, b) => n(b.id ?? b.campaign_id) - n(a.id ?? a.campaign_id));
   console.info("[Smartlead sync] campaigns discovered", { all: raw.length, client:client.name, matched:campaigns.length, range });
 
   // Opportunity ingestion must not depend on the much larger analytics sync.
@@ -208,6 +210,23 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
         const entry = rowsByCampaign.get(result.externalId) ?? { campaign: result.campaign, rows: [] };
         entry.rows.push(result.stats);
         rowsByCampaign.set(result.externalId, entry);
+        // Single-window periods can be committed immediately. Large client
+        // refreshes may outlive the request, but completed campaigns must still
+        // become visible instead of losing the entire batch and showing zero.
+        if (range === "7d" || range === "30d" || range === "all") {
+          const contacted = pick(result.stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
+          const values = {
+            people_contacted: contacted,
+            emails_sent: pick(result.stats, ["sent_count", "emails_sent", "total_sent"]),
+            uncontacted_leads: Math.max(0, pick(result.stats, ["total_count"]) - contacted),
+            replies: pick(result.stats, ["reply_count", "replies", "total_replies"]),
+            positive_replies: 0,
+            total_leads: pick(result.stats, ["total_count"]),
+          };
+          const now = new Date().toISOString();
+          const metadata = { ...values, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}_${range}`, value])), synced_at: now, [freshnessKey]: now, status: String(result.campaign.status ?? result.campaign.state ?? "unknown") };
+          await sql`UPDATE campaigns SET metadata_json=metadata_json||${sql.json(metadata)} WHERE provider='smartlead' AND external_id=${result.externalId}`;
+        }
       }
       if (index + 3 < jobs.length) await wait(1100);
     }
