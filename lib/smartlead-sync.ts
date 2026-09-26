@@ -205,10 +205,11 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
       return urls.map(url => ({ campaign, externalId, url }));
     });
     const rowsByCampaign = new Map<string, { campaign: Json; rows: Json[] }>();
-    // Three requests per batch avoids Smartlead's burst limit while keeping a
-    // large client (such as Celadonsoft) inside the route execution window.
-    for (let index = 0; index < jobs.length; index += 3) {
-      const batch = jobs.slice(index, index + 3);
+    // Five requests per batch stays within Smartlead's documented campaign
+    // filter limit and was verified without throttling across all 55 Celadonsoft
+    // campaigns. This keeps 60/90-day refreshes inside the route window.
+    for (let index = 0; index < jobs.length; index += 5) {
+      const batch = jobs.slice(index, index + 5);
       const results = await Promise.all(batch.map(async job => {
         const response = await smartleadFetch(job.url);
         if (!response.ok) throw new Error(`Smartlead campaign ${job.externalId} analytics failed (${response.status}). Previous snapshot preserved.`);
@@ -218,25 +219,32 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
         const entry = rowsByCampaign.get(result.externalId) ?? { campaign: result.campaign, rows: [] };
         entry.rows.push(result.stats);
         rowsByCampaign.set(result.externalId, entry);
-        // Single-window periods can be committed immediately. Large client
-        // refreshes may outlive the request, but completed campaigns must still
-        // become visible instead of losing the entire batch and showing zero.
-        if (range === "7d" || range === "30d" || range === "all") {
-          const contacted = pick(result.stats, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
+        const expectedRows = range === "all" ? 1 : dateChunks(range).length;
+        // Commit every campaign as soon as all its date chunks are complete.
+        // A large refresh can then make durable progress even if the request
+        // ends before the remaining historical campaigns finish.
+        if (entry.rows.length === expectedRows) {
+          const aggregate: Json = {
+            unique_sent_count: entry.rows.reduce((sum, row) => sum + pick(row, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]), 0),
+            sent_count: entry.rows.reduce((sum, row) => sum + pick(row, ["sent_count", "emails_sent", "total_sent"]), 0),
+            reply_count: entry.rows.reduce((sum, row) => sum + pick(row, ["reply_count", "replies", "total_replies"]), 0),
+            total_count: Math.max(0, ...entry.rows.map(row => pick(row, ["total_count"]))),
+          };
+          const contacted = pick(aggregate, ["unique_sent_count", "people_contacted", "unique_leads_contacted"]);
           const values = {
             people_contacted: contacted,
-            emails_sent: pick(result.stats, ["sent_count", "emails_sent", "total_sent"]),
-            uncontacted_leads: Math.max(0, pick(result.stats, ["total_count"]) - contacted),
-            replies: pick(result.stats, ["reply_count", "replies", "total_replies"]),
+            emails_sent: pick(aggregate, ["sent_count", "emails_sent", "total_sent"]),
+            uncontacted_leads: Math.max(0, pick(aggregate, ["total_count"]) - contacted),
+            replies: pick(aggregate, ["reply_count", "replies", "total_replies"]),
             positive_replies: 0,
-            total_leads: pick(result.stats, ["total_count"]),
+            total_leads: pick(aggregate, ["total_count"]),
           };
           const now = new Date().toISOString();
           const metadata = { ...values, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}_${range}`, value])), synced_at: now, [freshnessKey]: now, status: String(result.campaign.status ?? result.campaign.state ?? "unknown") };
           await sql`UPDATE campaigns SET metadata_json=metadata_json||${sql.json(metadata)} WHERE provider='smartlead' AND external_id=${result.externalId}`;
         }
       }
-      if (index + 3 < jobs.length) await wait(1100);
+      if (index + 5 < jobs.length) await wait(500);
     }
     for (const [externalId, { campaign, rows }] of rowsByCampaign) {
       const stats: Json = {
