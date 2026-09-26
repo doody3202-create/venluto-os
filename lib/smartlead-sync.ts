@@ -158,16 +158,12 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
     return { ok: true, skipped: true, reason: "analytics fresh", opportunityRepliesSynced: 0 };
   }
 
-  const campaignIds = campaigns.map(campaign => Number(campaign.id ?? campaign.campaign_id)).filter(Number.isFinite);
-  const opportunityCountsByRange = await smartleadOpportunityCounts(apiKey, campaignIds, clientId);
-  for (const selectedRange of ["7d", "30d", "60d", "90d", "all"] as RangeKey[]) {
-    const selectedCounts = opportunityCountsByRange.get(selectedRange) ?? new Map<string, number>();
-    const selectedTotal = [...selectedCounts.values()].reduce((sum, value) => sum + value, 0);
-    const opportunityMetrics = { positiveReplies: selectedTotal, opportunities: selectedTotal, opportunitySource: "smartlead-categories-v7" };
-    await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${selectedRange},${sql.json(opportunityMetrics)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=campaign_analytics_snapshots.metrics_json||EXCLUDED.metrics_json,synced_at=NOW()`;
-  }
-  const opportunityCounts = opportunityCountsByRange.get(range) ?? new Map<string, number>();
-  const opportunityTotal = [...opportunityCounts.values()].reduce((sum, value) => sum + value, 0);
+  // Opportunity replies are reconciled by syncClientSmartleadOpportunities and
+  // the analytics route counts those imported records by reply date. Repeating
+  // the complete master-inbox pagination here delayed large workspaces long
+  // enough that their send-volume request never committed.
+  const opportunityCounts = new Map<string, number>();
+  const opportunityTotal = n(freshMetrics?.opportunities);
   const earlyTotals: {
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
     replies: number; positiveReplies: number; opportunities: number;
