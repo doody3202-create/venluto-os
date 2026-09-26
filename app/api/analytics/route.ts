@@ -4,42 +4,61 @@ export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
-const sevenDayLiveCache = new Map<string, { expires: number; promise: Promise<Map<string, Record<string, unknown>>> }>();
-const liveSevenDayCampaigns = (keyword: string) => {
-  const cached = sevenDayLiveCache.get(keyword);
+const liveRangeCache = new Map<string, { expires: number; promise: Promise<Map<string, Record<string, unknown>>> }>();
+const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
+  const cacheKey = `${keyword}:${range}`;
+  const cached = liveRangeCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) return cached.promise;
   const promise = (async () => {
     const apiKey = process.env.SMARTLEAD_API_KEY;
     const result = new Map<string, Record<string, unknown>>();
     if (!apiKey) return result;
     const end = new Date(), start = new Date(end);
-    start.setUTCDate(start.getUTCDate() - 6);
+    start.setUTCDate(start.getUTCDate() - (daysFor(range) - 1));
     const startDate = start.toISOString().slice(0, 10), endDate = end.toISOString().slice(0, 10);
     const discovery = await fetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
     if (!discovery.ok) return result;
     const payload = await discovery.json() as Record<string, unknown> | Array<Record<string, unknown>>;
     const all = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Array<Record<string, unknown>>;
     const windowStart = new Date(`${startDate}T00:00:00.000Z`).getTime();
-    const recent = all.filter(campaign => {
+    const matched = all.filter(campaign => {
       if (!String(campaign.name ?? "").toLowerCase().includes(keyword.toLowerCase())) return false;
+      if (range !== "7d") return true;
       const createdAt = new Date(String(campaign.created_at ?? campaign.createdAt ?? "")).getTime();
       const state = String(campaign.status ?? campaign.state ?? "").toLowerCase();
       return (Number.isFinite(createdAt) && createdAt >= windowStart) || state === "active" || state === "started" || state === "running";
     });
-    for (let index = 0; index < recent.length; index += 3) {
-      const rows = await Promise.all(recent.slice(index, index + 3).map(async campaign => {
+    const windows: Array<{start:string;end:string}> = [];
+    if (range === "all") windows.push({ start: "", end: "" });
+    else for (let cursor = new Date(`${startDate}T00:00:00Z`), final = new Date(`${endDate}T00:00:00Z`); cursor <= final;) {
+      const chunkEnd = new Date(Math.min(final.getTime(), cursor.getTime() + 29 * 86400000));
+      windows.push({ start: cursor.toISOString().slice(0,10), end: chunkEnd.toISOString().slice(0,10) });
+      cursor = new Date(chunkEnd.getTime() + 86400000);
+    }
+    const jobs = matched.flatMap(campaign => windows.map(window => ({ campaign, window })));
+    const partial = new Map<string, Record<string, unknown>[]>();
+    for (let index = 0; index < jobs.length; index += 5) {
+      const rows = await Promise.all(jobs.slice(index, index + 5).map(async ({campaign,window}) => {
         const id = String(campaign.id ?? campaign.campaign_id ?? "");
         if (!id) return null;
-        const response = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${id}/analytics-by-date?start_date=${startDate}&end_date=${endDate}&api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+        const endpoint = range === "all"
+          ? `https://server.smartlead.ai/api/v1/campaigns/${id}/analytics?api_key=${encodeURIComponent(apiKey)}`
+          : `https://server.smartlead.ai/api/v1/campaigns/${id}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`;
+        const response = await fetch(endpoint, { cache: "no-store" });
         return response.ok ? { id, stats: await response.json() as Record<string, unknown> } : null;
       }));
-      for (const row of rows) if (row) result.set(row.id, row.stats);
-      if (index + 3 < recent.length) await new Promise(resolve => setTimeout(resolve, 1100));
+      for (const row of rows) if (row) partial.set(row.id, [...(partial.get(row.id) ?? []), row.stats]);
+      if (index + 5 < jobs.length) await new Promise(resolve => setTimeout(resolve, 500));
     }
+    for (const [id, rows] of partial) result.set(id, {
+      unique_sent_count: rows.reduce((sum,row)=>sum+Number(row.unique_sent_count??0),0),
+      sent_count: rows.reduce((sum,row)=>sum+Number(row.sent_count??0),0),
+      reply_count: rows.reduce((sum,row)=>sum+Number(row.reply_count??0),0),
+    });
     return result;
   })();
-  sevenDayLiveCache.set(keyword, { expires: Date.now() + 10 * 60_000, promise });
-  void promise.catch(() => sevenDayLiveCache.delete(keyword));
+  liveRangeCache.set(cacheKey, { expires: Date.now() + 10 * 60_000, promise });
+  void promise.catch(() => liveRangeCache.delete(cacheKey));
   return promise;
 };
 
@@ -195,8 +214,11 @@ export async function GET(request: Request) {
       opportunities: Math.max(Number(metrics.opportunities ?? 0), Number(thirtyDayMetrics.opportunities ?? 0), totals.opportunities),
     };
   }
-  if (range === "7d" && totals.peopleContacted === 0 && campaigns.length) {
-    const live = await liveSevenDayCampaigns(String(client.campaign_match_keyword ?? client.name));
+  const clientKeyword = String(client.campaign_match_keyword ?? client.name);
+  const needsLiveRange = (range === "7d" && totals.peopleContacted === 0)
+    || (clientKeyword.toLowerCase() === "celadonsoft" && isWiderThanThirtyDays);
+  if (needsLiveRange && campaigns.length) {
+    const live = await liveRangeCampaigns(clientKeyword, range);
     if (live.size) {
       for (const campaign of campaigns) {
         const stats = live.get(String(campaign.external_id));
