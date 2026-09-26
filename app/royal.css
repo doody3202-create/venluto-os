@@ -101,3 +101,45 @@ table{color:#211c3b}th,.performanceTable th{background:#f1eef9;color:#716a86}td{
  button,select,input,a{touch-action:manipulation}
 }
 @media(max-width:350px){.overviewMetrics,.ratioStrip,.tamStats.compact{grid-template-columns:1fr}.portalHeader{grid-template-columns:1fr}.demoBadge{justify-content:center}}
+
+/* Motion layer — restrained, tactile and accessible. */
+.overviewPage{position:relative;isolation:isolate}
+.overviewGlow{position:absolute;z-index:-1;top:20px;right:4%;width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,rgba(119,83,232,.13),transparent 68%);filter:blur(12px);pointer-events:none;animation:ambientFloat 8s ease-in-out infinite alternate}
+.overviewToolbar>div:last-child{position:relative;box-shadow:0 8px 24px rgba(70,47,145,.08);transition:box-shadow .25s ease,transform .25s ease}
+.overviewToolbar>div:last-child:hover{box-shadow:0 12px 28px rgba(70,47,145,.13);transform:translateY(-1px)}
+.overviewToolbar button{position:relative;transition:color .2s ease,background .2s ease,transform .15s ease,box-shadow .2s ease}
+.overviewToolbar button:hover{transform:translateY(-1px)}
+.overviewToolbar button:active{transform:translateY(1px) scale(.97)}
+.overviewToolbar button.active{box-shadow:0 7px 18px rgba(93,65,210,.27)}
+.overviewMetrics article{position:relative;overflow:hidden;transform-origin:50% 100%;animation:metricArrival .52s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--card-index) * 42ms);transition:transform .28s cubic-bezier(.2,.8,.2,1),box-shadow .28s ease,border-color .28s ease}
+.overviewMetrics article:hover{transform:translateY(-5px);border-color:#c5b9ee;box-shadow:0 22px 46px rgba(62,41,136,.15)}
+.overviewMetrics article>strong{font-variant-numeric:tabular-nums;letter-spacing:-.025em}
+.overviewMetrics article>div{position:relative;z-index:2}
+.metricShine{position:absolute;inset:-60% auto -60% -45%;width:34%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.72),transparent);transform:rotate(18deg);opacity:0;pointer-events:none}
+.overviewMetrics article:hover .metricShine{animation:cardShimmer .75s ease}
+.overviewMetrics em{transition:transform .2s ease,filter .2s ease}
+.overviewMetrics article:hover em{transform:scale(1.04);filter:saturate(1.12)}
+.ratioStrip>div,.funnelRoster,.performanceTable{animation:surfaceReveal .55s .18s cubic-bezier(.2,.8,.2,1) both;transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease}
+.ratioStrip>div:hover{transform:translateY(-3px);border-color:#cbbff1;box-shadow:0 18px 38px rgba(61,42,129,.12)}
+.activityChart{position:relative;overflow:hidden;animation:surfaceReveal .58s .12s cubic-bezier(.2,.8,.2,1) both;transition:transform .28s ease,box-shadow .28s ease}
+.activityChart:hover{transform:translateY(-2px);box-shadow:0 24px 50px rgba(47,33,110,.25)}
+.activityChart::after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.045) 48%,transparent 66%);transform:translateX(-120%);animation:chartSweep 1.2s .25s ease-out both;pointer-events:none}
+.emailLine,.replyLine{stroke-dasharray:1600;stroke-dashoffset:1600;animation:drawChart 1.15s cubic-bezier(.3,.7,.2,1) forwards}
+.replyLine{animation-delay:.16s}
+.chartLegend i{animation:legendPulse 2.2s ease-in-out infinite}
+.chartLegend b:nth-child(2) i{animation-delay:.5s}
+.sidebar nav button,.demoBadge,.signOut{transition:transform .18s ease,background .2s ease,color .2s ease,box-shadow .2s ease,border-color .2s ease}
+.sidebar nav button:hover{transform:translateX(3px)}
+.sidebar nav button:active,.demoBadge:active,.signOut:active{transform:scale(.94)}
+.sidebar nav button.navActive{box-shadow:0 8px 22px rgba(96,66,211,.22)}
+.demoBadge span{animation:livePulse 2.1s ease-out infinite}
+@keyframes metricArrival{from{opacity:0;transform:translateY(16px) scale(.975)}to{opacity:1;transform:none}}
+@keyframes surfaceReveal{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes cardShimmer{0%{left:-45%;opacity:0}25%{opacity:.72}100%{left:125%;opacity:0}}
+@keyframes drawChart{to{stroke-dashoffset:0}}
+@keyframes chartSweep{to{transform:translateX(120%)}}
+@keyframes ambientFloat{to{transform:translate(-38px,28px) scale(1.12)}}
+@keyframes legendPulse{50%{transform:scale(1.3);box-shadow:0 0 12px currentColor}}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(45,196,128,.34)}70%{box-shadow:0 0 0 8px rgba(45,196,128,0)}100%{box-shadow:0 0 0 0 rgba(45,196,128,0)}}
+@media(max-width:620px){.sidebar nav button:hover{transform:translateY(-3px)}.overviewMetrics article:hover{transform:translateY(-2px)}.overviewGlow{width:180px;height:180px}}
+@media(prefers-reduced-motion:reduce){.overviewGlow,.overviewMetrics article,.metricShine,.ratioStrip>div,.funnelRoster,.performanceTable,.activityChart,.activityChart::after,.emailLine,.replyLine,.chartLegend i,.demoBadge span{animation:none!important}.overviewMetrics article,.ratioStrip>div,.activityChart,.overviewToolbar button,.sidebar nav button{transition:none!important}}
