@@ -6,7 +6,7 @@ const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 :
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
 const liveRangeCache = new Map<string, { expires: number; promise: Promise<Map<string, Record<string, unknown>>> }>();
 const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
-  const cacheKey = `${keyword}:${range}`;
+  const cacheKey = `all-matching-campaigns-v2:${keyword}:${range}`;
   const cached = liveRangeCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) return cached.promise;
   const promise = (async () => {
