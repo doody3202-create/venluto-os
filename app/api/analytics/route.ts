@@ -4,6 +4,44 @@ export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
+const sevenDayLiveCache = new Map<string, { expires: number; promise: Promise<Map<string, Record<string, unknown>>> }>();
+const liveSevenDayCampaigns = (keyword: string) => {
+  const cached = sevenDayLiveCache.get(keyword);
+  if (cached && cached.expires > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const apiKey = process.env.SMARTLEAD_API_KEY;
+    const result = new Map<string, Record<string, unknown>>();
+    if (!apiKey) return result;
+    const end = new Date(), start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 6);
+    const startDate = start.toISOString().slice(0, 10), endDate = end.toISOString().slice(0, 10);
+    const discovery = await fetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+    if (!discovery.ok) return result;
+    const payload = await discovery.json() as Record<string, unknown> | Array<Record<string, unknown>>;
+    const all = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Array<Record<string, unknown>>;
+    const windowStart = new Date(`${startDate}T00:00:00.000Z`).getTime();
+    const recent = all.filter(campaign => {
+      if (!String(campaign.name ?? "").toLowerCase().includes(keyword.toLowerCase())) return false;
+      const createdAt = new Date(String(campaign.created_at ?? campaign.createdAt ?? "")).getTime();
+      const state = String(campaign.status ?? campaign.state ?? "").toLowerCase();
+      return (Number.isFinite(createdAt) && createdAt >= windowStart) || state === "active" || state === "started" || state === "running";
+    });
+    for (let index = 0; index < recent.length; index += 3) {
+      const rows = await Promise.all(recent.slice(index, index + 3).map(async campaign => {
+        const id = String(campaign.id ?? campaign.campaign_id ?? "");
+        if (!id) return null;
+        const response = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${id}/analytics-by-date?start_date=${startDate}&end_date=${endDate}&api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+        return response.ok ? { id, stats: await response.json() as Record<string, unknown> } : null;
+      }));
+      for (const row of rows) if (row) result.set(row.id, row.stats);
+      if (index + 3 < recent.length) await new Promise(resolve => setTimeout(resolve, 1100));
+    }
+    return result;
+  })();
+  sevenDayLiveCache.set(keyword, { expires: Date.now() + 10 * 60_000, promise });
+  void promise.catch(() => sevenDayLiveCache.delete(keyword));
+  return promise;
+};
 
 export async function GET(request: Request) {
   await ensureDatabase();
@@ -156,6 +194,21 @@ export async function GET(request: Request) {
       positiveReplies: Math.max(Number(metrics.positiveReplies ?? 0), Number(thirtyDayMetrics.positiveReplies ?? 0), totals.positiveReplies),
       opportunities: Math.max(Number(metrics.opportunities ?? 0), Number(thirtyDayMetrics.opportunities ?? 0), totals.opportunities),
     };
+  }
+  if (range === "7d" && totals.peopleContacted === 0 && campaigns.length) {
+    const live = await liveSevenDayCampaigns(String(client.campaign_match_keyword ?? client.name));
+    if (live.size) {
+      for (const campaign of campaigns) {
+        const stats = live.get(String(campaign.external_id));
+        if (!stats) continue;
+        campaign.contacted = Number(stats.unique_sent_count ?? stats.people_contacted ?? 0);
+        campaign.emails_sent = Number(stats.sent_count ?? stats.emails_sent ?? 0);
+        campaign.replies = Math.max(Number(campaign.replies), Number(stats.reply_count ?? stats.replies ?? 0));
+      }
+      totals.peopleContacted = campaigns.reduce((sum, row) => sum + Number(row.contacted), 0);
+      totals.emailsSent = campaigns.reduce((sum, row) => sum + Number(row.emails_sent), 0);
+      totals.replies = campaigns.reduce((sum, row) => sum + Number(row.replies), 0);
+    }
   }
   const inbox = await sql`
     SELECT * FROM (
