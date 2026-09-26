@@ -143,3 +143,34 @@ table{color:#211c3b}th,.performanceTable th{background:#f1eef9;color:#716a86}td{
 @keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(45,196,128,.34)}70%{box-shadow:0 0 0 8px rgba(45,196,128,0)}100%{box-shadow:0 0 0 0 rgba(45,196,128,0)}}
 @media(max-width:620px){.sidebar nav button:hover{transform:translateY(-3px)}.overviewMetrics article:hover{transform:translateY(-2px)}.overviewGlow{width:180px;height:180px}}
 @media(prefers-reduced-motion:reduce){.overviewGlow,.overviewMetrics article,.metricShine,.ratioStrip>div,.funnelRoster,.performanceTable,.activityChart,.activityChart::after,.emailLine,.replyLine,.chartLegend i,.demoBadge span{animation:none!important}.overviewMetrics article,.ratioStrip>div,.activityChart,.overviewToolbar button,.sidebar nav button{transition:none!important}}
+
+/* Action surfaces — Tasks and Positive Replies. */
+.replyList{gap:13px}
+.replyCard{overflow:hidden;border-radius:16px;padding:18px 18px 18px 20px;animation:replyArrival .48s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--reply-index) * 55ms);transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease}
+.replyCard:hover{transform:translateY(-3px);border-color:#c8bbed;box-shadow:0 22px 46px rgba(61,41,133,.14)}
+.replyCard.urgent:before{top:0;bottom:0;left:0;width:4px;border-radius:0;background:linear-gradient(#ff9c62,#d86079);box-shadow:0 0 18px rgba(224,101,91,.34)}
+.replyCard .personAvatar,.positiveReplyCard .personAvatar{box-shadow:0 7px 18px rgba(72,48,145,.16);transition:transform .25s ease,box-shadow .25s ease}
+.replyCard:hover .personAvatar,.positiveReplyCard:hover .personAvatar{transform:rotate(-4deg) scale(1.08);box-shadow:0 10px 24px rgba(72,48,145,.22)}
+.actionDue.overdue{position:relative;padding-left:19px}.actionDue.overdue:before{content:"";position:absolute;left:8px;top:50%;width:6px;height:6px;border-radius:50%;background:#ef8750;transform:translateY(-50%);animation:duePulse 1.8s ease-out infinite}
+.replyCard .cardActions{min-width:136px;gap:7px}
+.replyCard .cardActions button{position:relative;display:grid;grid-template-columns:25px 1fr;grid-template-rows:auto auto;column-gap:8px;align-items:center;overflow:hidden;min-height:45px;padding:7px 10px;border-radius:10px;text-align:left;transition:transform .18s ease,box-shadow .2s ease,border-color .2s ease,filter .2s ease}
+.replyCard .cardActions button:before,.positiveReplyCard footer button:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.25),transparent 70%);transform:translateX(-120%);transition:transform .55s ease;pointer-events:none}
+.replyCard .cardActions button:hover:before,.positiveReplyCard footer button:hover:before{transform:translateX(120%)}
+.replyCard .cardActions button:hover{transform:translateX(-3px);box-shadow:0 9px 20px rgba(55,38,116,.16);filter:saturate(1.08)}
+.replyCard .cardActions button:active,.positiveReplyCard footer button:active{transform:scale(.96)}
+.replyCard .cardActions i{grid-row:1/3;display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:rgba(255,255,255,.18);font-size:12px;font-style:normal}
+.replyCard .cardActions b{font-size:9px;line-height:1.1}.replyCard .cardActions span{font-size:7px;line-height:1.1;opacity:.7}
+.replyCard .openButton{background:#f7f4ff;border:1px solid #d8cff4;color:#5838bd}.replyCard .openButton i{background:#e9e2ff}
+.replyCard .doneButton{border:1px solid #6550d4;color:#fff}.replyCard .snoozeButton{border:1px solid #e1dced;background:#fff;color:#625b72}.replyCard .snoozeButton i{background:#f0edf6}
+.readOnlyInbox{gap:12px}.readOnlyNotice{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px}.readOnlyNotice>i{display:grid;place-items:center;width:27px;height:27px;border-radius:9px;background:linear-gradient(135deg,#7958e7,#5144cb);color:#fff;font-style:normal;box-shadow:0 7px 17px rgba(83,57,192,.25)}.readOnlyNotice span,.readOnlyNotice b{color:inherit}
+.readOnlyInbox article.positiveReplyCard{position:relative;grid-template-columns:44px minmax(0,1fr);gap:14px;padding:18px;border-radius:16px;overflow:hidden;animation:replyArrival .48s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--reply-index) * 45ms);transition:transform .26s ease,border-color .26s ease,box-shadow .26s ease}
+.readOnlyInbox article.positiveReplyCard:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(#7958e7,#60b9d9);opacity:.65}
+.readOnlyInbox article.positiveReplyCard:hover{transform:translateY(-3px);border-color:#c8bbed;box-shadow:0 23px 48px rgba(60,41,129,.14)}
+.positiveReplyBody{min-width:0}.positiveReplyHead{display:flex;align-items:center;justify-content:space-between;gap:12px}.positiveReplyHead h3{margin:0 0 4px}.positiveReplyHead time{white-space:nowrap}
+.positiveReplyCard blockquote{border-radius:0 11px 11px 0;transition:background .2s ease,border-color .2s ease}.positiveReplyCard:hover blockquote{background:#f3efff;border-left-color:#5e42d0}
+.positiveReplyCard footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}.positiveReplyCard footer>span{max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#77718a;font-size:8px}
+.positiveReplyCard footer button{position:relative;overflow:hidden;flex:none;border:0;border-radius:9px;padding:9px 12px;background:linear-gradient(135deg,#7656e7,#5145d3);color:#fff;font-size:8px;font-weight:900;box-shadow:0 7px 17px rgba(80,57,188,.22);transition:transform .18s ease,box-shadow .2s ease}.positiveReplyCard footer button:hover{transform:translateY(-2px);box-shadow:0 11px 24px rgba(80,57,188,.30)}.positiveReplyCard footer button i{margin-right:5px;font-style:normal}
+@keyframes replyArrival{from{opacity:0;transform:translateY(13px) scale(.988)}to{opacity:1;transform:none}}
+@keyframes duePulse{0%{box-shadow:0 0 0 0 rgba(239,135,80,.38)}70%{box-shadow:0 0 0 7px rgba(239,135,80,0)}100%{box-shadow:0 0 0 0 rgba(239,135,80,0)}}
+@media(max-width:620px){.replyCard .cardActions{min-width:0}.replyCard .cardActions button{display:flex;justify-content:center;padding:8px}.replyCard .cardActions button i{width:23px;height:23px}.replyCard .cardActions button span{display:none}.replyCard .cardActions button:hover{transform:translateY(-2px)}.positiveReplyCard footer{align-items:flex-start;flex-direction:column}.positiveReplyCard footer>span{max-width:100%}.positiveReplyCard footer button{width:100%;min-height:42px}.positiveReplyHead{align-items:flex-start;flex-direction:column;gap:3px}}
+@media(prefers-reduced-motion:reduce){.replyCard,.positiveReplyCard,.actionDue.overdue:before{animation:none!important}.replyCard,.positiveReplyCard,.replyCard .cardActions button,.positiveReplyCard footer button{transition:none!important}}
