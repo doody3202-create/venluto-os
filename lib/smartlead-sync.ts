@@ -187,7 +187,13 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
     opportunitySource: string; opportunityRecordsSource?: string;
   } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7" };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
-  const analyticsCampaigns = range === "7d"
+  const recentlySyncedRows = await sql`
+    SELECT external_id FROM campaigns
+    WHERE provider='smartlead'
+      AND NULLIF(metadata_json->>${freshnessKey},'')::timestamptz > NOW() - INTERVAL '10 minutes'
+  `;
+  const recentlySynced = new Set(recentlySyncedRows.map(row => String(row.external_id)));
+  const candidateCampaigns = range === "7d"
     ? campaigns.filter(campaign => {
         const createdAt = new Date(String(campaign.created_at ?? campaign.createdAt ?? "")).getTime();
         const state = String(campaign.status ?? campaign.state ?? "").toLowerCase();
@@ -195,6 +201,7 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
           || state === "active" || state === "started" || state === "running";
       })
     : campaigns;
+  const analyticsCampaigns = candidateCampaigns.filter(campaign => !recentlySynced.has(String(campaign.id ?? campaign.campaign_id ?? "")));
   if (analyticsCampaigns.length) {
     const jobs = analyticsCampaigns.flatMap((campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
