@@ -447,7 +447,7 @@ function FunnelLeads({ analytics, range }: {
     range: string;
 }) {
     const days = range === '7d' ? 7 : range === '60d' ? 60 : range === '90d' ? 90 : 30;
-    const dateFor = (lead: AnalyticsData['inbox'][number], tag: string) => tag === 'meeting_booked' ? lead.meeting_booked_at : tag === 'showed' ? lead.showed_at : lead.closed_at ?? lead.expected_close_date;
+    const dateFor = (lead: AnalyticsData['inbox'][number], tag: string) => tag === 'meeting_booked' ? lead.meeting_booked_at : tag === 'showed' ? lead.showed_at : lead.expected_close_date;
     const within = (value: string | null) => {
         if (!value) return false;
         const timestamp = new Date(String(value)).getTime(), now = Date.now();
