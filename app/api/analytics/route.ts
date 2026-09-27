@@ -4,6 +4,16 @@ export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const smartleadGet = async (url: string) => {
+  let response = await fetch(url, { cache: "no-store" });
+  for (let attempt = 0; attempt < 3 && (response.status === 429 || response.status >= 500); attempt++) {
+    const retryAfter = Number(response.headers.get("retry-after") ?? 0);
+    await wait(retryAfter > 0 ? Math.min(retryAfter * 1000, 12_000) : 1_500 * (attempt + 1));
+    response = await fetch(url, { cache: "no-store" });
+  }
+  return response;
+};
 const liveRangeCache = new Map<string, { expires: number; promise: Promise<Map<string, Record<string, unknown>>> }>();
 const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
   const cacheKey = `all-matching-campaigns-v2:${keyword}:${range}`;
@@ -16,7 +26,7 @@ const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
     const end = new Date(), start = new Date(end);
     start.setUTCDate(start.getUTCDate() - (daysFor(range) - 1));
     const startDate = start.toISOString().slice(0, 10), endDate = end.toISOString().slice(0, 10);
-    const discovery = await fetch(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+    const discovery = await smartleadGet(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`);
     if (!discovery.ok) return result;
     const payload = await discovery.json() as Record<string, unknown> | Array<Record<string, unknown>>;
     const all = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Array<Record<string, unknown>>;
@@ -33,6 +43,7 @@ const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
     }
     const jobs = matched.flatMap(campaign => windows.map(window => ({ campaign, window })));
     const partial = new Map<string, Record<string, unknown>[]>();
+    let complete = true;
     for (let index = 0; index < jobs.length; index += 5) {
       const rows = await Promise.all(jobs.slice(index, index + 5).map(async ({campaign,window}) => {
         const id = String(campaign.id ?? campaign.campaign_id ?? "");
@@ -40,12 +51,14 @@ const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
         const endpoint = range === "all"
           ? `https://server.smartlead.ai/api/v1/campaigns/${id}/analytics?api_key=${encodeURIComponent(apiKey)}`
           : `https://server.smartlead.ai/api/v1/campaigns/${id}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`;
-        const response = await fetch(endpoint, { cache: "no-store" });
+        const response = await smartleadGet(endpoint);
+        if (!response.ok) complete = false;
         return response.ok ? { id, stats: await response.json() as Record<string, unknown> } : null;
       }));
       for (const row of rows) if (row) partial.set(row.id, [...(partial.get(row.id) ?? []), row.stats]);
       if (index + 5 < jobs.length) await new Promise(resolve => setTimeout(resolve, 500));
     }
+    if (!complete) return result;
     for (const [id, rows] of partial) result.set(id, {
       unique_sent_count: rows.reduce((sum,row)=>sum+Number(row.unique_sent_count??0),0),
       sent_count: rows.reduce((sum,row)=>sum+Number(row.sent_count??0),0),
@@ -54,7 +67,11 @@ const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
     return result;
   })();
   liveRangeCache.set(cacheKey, { expires: Date.now() + 10 * 60_000, promise });
-  void promise.catch(() => liveRangeCache.delete(cacheKey));
+  void promise.then(result => {
+    // Never preserve a transient rate-limit/server failure as a valid zero.
+    // A later dashboard poll must be allowed to retry the exact range.
+    if (result.size === 0) liveRangeCache.delete(cacheKey);
+  }).catch(() => liveRangeCache.delete(cacheKey));
   return promise;
 };
 
