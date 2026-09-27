@@ -83,8 +83,15 @@ const smartleadOpportunityCounts = (apiKey: string, campaignIds: number[], clien
   void run.finally(() => opportunityRangeSyncs.delete(clientId));
   return run;
 };
+const analyticsSyncs = new Map<string, Promise<unknown>>();
 export function syncVenlutoSmartleadCampaigns(force = false, range: RangeKey = "30d", requestedClientId?:number) {
-  return performSmartleadCampaignSync(force, range, requestedClientId);
+  const key = `${requestedClientId ?? "venluto"}:${range}`;
+  const current = analyticsSyncs.get(key);
+  if (current) return current;
+  const run = performSmartleadCampaignSync(force, range, requestedClientId);
+  analyticsSyncs.set(key, run);
+  void run.finally(() => analyticsSyncs.delete(key));
+  return run;
 }
 
 const opportunityImportByClient = new Map<number, Promise<number>>();

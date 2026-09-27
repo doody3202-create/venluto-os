@@ -1,5 +1,6 @@
 import { ensureDatabase, sql } from "@/lib/db";
 import { scopedClientId } from "@/lib/portal-auth";
+import { syncVenlutoSmartleadCampaigns } from "@/lib/smartlead-sync";
 export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
@@ -156,6 +157,16 @@ export async function GET(request: Request) {
   // reply timestamps. They are the authoritative source for period filtering;
   // never let an incomplete or stale analytics snapshot replace them with 0.
   totals.opportunities = Number(nowLive.opportunities);
+  // Self-heal a missing selected-period outbound snapshot. This runs after the
+  // response data has been assembled and is deduplicated per client/range, so
+  // normal page polling stays fast while a broken or newly created workspace
+  // repairs itself without an operator or a separate worker intervention.
+  const missingOutbound = totals.peopleContacted === 0 && totals.emailsSent === 0;
+  if ((!analyticsComplete || missingOutbound) && (totals.opportunities > 0 || campaigns.length > 0)) {
+    void syncVenlutoSmartleadCampaigns(true, range, clientId).catch(error =>
+      console.error("[Analytics self-heal] failed", { clientId, range, error }),
+    );
+  }
   const inbox = await sql`
     SELECT * FROM (
       SELECT DISTINCT ON (r.prospect_id) r.id,r.prospect_id,r.body,r.sentiment,r.reply_category,r.received_at,
