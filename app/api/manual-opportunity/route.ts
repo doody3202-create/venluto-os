@@ -1,5 +1,5 @@
 import { ensureDatabase, sql } from "@/lib/db";
-import { scopedClientId } from "@/lib/portal-auth";
+import { readSession, scopedClientId } from "@/lib/portal-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   await ensureDatabase();
   const form = await request.formData();
-  const clientId = scopedClientId(request, Number(form.get("clientId")));
+  const session = readSession(request);
+  const requestedClientId = Number(form.get("clientId"));
+  const clientId = session?.role === "client" ? session.clientId : scopedClientId(request, requestedClientId);
   if (!clientId) return Response.json({ error: "Workspace access denied" }, { status: 403 });
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   const name = String(form.get("name") ?? "").trim();
