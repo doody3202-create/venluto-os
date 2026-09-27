@@ -14,7 +14,12 @@ export async function GET(request: Request) {
   const [client] = await sql`SELECT id,name,campaign_match_keyword FROM clients WHERE id=${clientId} AND status='active'`;
   if (!client) return Response.json({ error: "Client workspace not found" }, { status: 404 });
 
-  const days = daysFor(range), end = new Date(), start = new Date(end.getTime() - days * 86400000), prior = new Date(start.getTime() - days * 86400000);
+  const days = daysFor(range), today = new Date();
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1));
+  const start = range === "all"
+    ? new Date("1970-01-01T00:00:00.000Z")
+    : new Date(end.getTime() - days * 86400000);
+  const prior = range === "all" ? start : new Date(start.getTime() - days * 86400000);
   const startIso = start.toISOString(), endIso = end.toISOString(), priorIso = prior.toISOString();
   await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) SELECT ${clientId},ca.id,'campaign_name' FROM campaigns ca WHERE LOWER(ca.name) LIKE ${`%${String(client.campaign_match_keyword??client.name).toLowerCase()}%`} ON CONFLICT DO NOTHING`;
 
@@ -35,7 +40,7 @@ export async function GET(request: Request) {
   const liveTotals = async (from: string, to: string) => (await sql`
     SELECT COUNT(DISTINCT r.id)::int replies,
       COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int positive_replies,
-      COUNT(DISTINCT r.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int opportunities,
+      COUNT(DISTINCT p.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int opportunities,
       COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('confirmed','booked'))::int meetings_booked,
       COUNT(DISTINCT m.id) FILTER(WHERE m.status IN ('completed','showed'))::int meetings_completed,
       COUNT(DISTINCT p.id) FILTER(WHERE p.status IN ('closed_won','won'))::int closed_won
@@ -138,6 +143,10 @@ export async function GET(request: Request) {
       opportunities: Number(metrics.opportunities ?? 0),
     };
   }
+  // Opportunity records are already imported from Smartlead with their real
+  // reply timestamps. They are the authoritative source for period filtering;
+  // never let an incomplete or stale analytics snapshot replace them with 0.
+  totals.opportunities = Number(nowLive.opportunities);
   const inbox = await sql`
     SELECT * FROM (
       SELECT DISTINCT ON (r.prospect_id) r.id,r.prospect_id,r.body,r.sentiment,r.reply_category,r.received_at,
