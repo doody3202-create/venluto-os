@@ -29,6 +29,10 @@ export async function POST(request: Request) {
   const companyName = String(form.get("company") ?? "").trim();
   const campaignName = String(form.get("campaign") ?? "").trim();
   const reply = String(form.get("reply") ?? "").trim();
+  const receivedDate = String(form.get("receivedDate") ?? "").trim();
+  const receivedAt = /^\d{4}-\d{2}-\d{2}$/.test(receivedDate)
+    ? `${receivedDate}T12:00:00.000Z`
+    : new Date().toISOString();
   if (!email || !name || !companyName || !campaignName || !reply) return Response.json({ error: "Every field is required" }, { status: 400 });
   const [campaign] = await sql`SELECT ca.id FROM campaigns ca JOIN client_campaigns cc ON cc.campaign_id=ca.id AND cc.client_id=${clientId} WHERE LOWER(ca.name)=LOWER(${campaignName}) LIMIT 1`;
   if (!campaign) return Response.json({ error: "Campaign not found in this workspace" }, { status: 404 });
@@ -39,7 +43,7 @@ export async function POST(request: Request) {
   if (!prospect) [prospect] = await sql`INSERT INTO prospects(first_name,last_name,email,normalized_email,source,status,pipeline_tag,owner_id,company_id,next_action,deadline_at) VALUES (${firstName},${lastName},${email},${email},'Manual positive reply','action_due','opportunity',(SELECT id FROM owners WHERE email='vlad@venlutogroup.com'),${company.id},'Reply to opportunity',NOW()) RETURNING id`;
   else await sql`UPDATE prospects SET company_id=${company.id},status='action_due',pipeline_tag='opportunity',next_action='Reply to opportunity',deadline_at=NOW(),updated_at=NOW() WHERE id=${prospect.id}`;
   await sql`INSERT INTO client_prospects(client_id,prospect_id) VALUES (${clientId},${prospect.id}) ON CONFLICT DO NOTHING`;
-  await sql`INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at) VALUES (${prospect.id},${campaign.id},${`manual:${clientId}:${email}:${campaign.id}`},${reply},'positive','Interested',NOW()) ON CONFLICT(provider_reply_id) DO UPDATE SET body=EXCLUDED.body,sentiment='positive',reply_category='Interested',received_at=NOW()`;
+  await sql`INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at) VALUES (${prospect.id},${campaign.id},${`manual:${clientId}:${email}:${campaign.id}`},${reply},'positive','Interested',${receivedAt}) ON CONFLICT(provider_reply_id) DO UPDATE SET body=EXCLUDED.body,sentiment='positive',reply_category='Interested',received_at=EXCLUDED.received_at`;
   // Railway exposes the app internally as localhost:8080, so request.url is
   // not a safe public redirect target. Always send the browser back to the
   // public desk domain after a successful CRM save.

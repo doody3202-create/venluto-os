@@ -6,6 +6,7 @@ export default function CrmAddPage() {
     <label>Email<input name="email" inputMode="email" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
     <label>Company<input name="company" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
     <label>Exact campaign<input name="campaign" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
+    <label>Reply date<input name="receivedDate" type="date" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
     <label>Positive reply<textarea name="reply" required style={{display:'block',width:'100%',minHeight:110,padding:13,marginTop:7}}/></label>
     <button type="submit" style={{padding:14,border:0,borderRadius:10,background:'#6746df',color:'#fff',fontWeight:800}}>Save positive opportunity</button>
   </form></main>;
