@@ -1,1 +1,1 @@
-{"cleanUrls":true,"trailingSlash":false}
+{"cleanUrls":true,"trailingSlash":false,"rewrites":[{"source":"/api/report","destination":"https://venluto-os-production.up.railway.app/api/reports"}]}
