@@ -35,7 +35,7 @@ export default function Login() {
         <div className={styles.brandCopy}>
           <span>OUTBOUND INTELLIGENCE</span>
           <h1>Every signal.<br/><em>One clear view.</em></h1>
-          <p>Campaign performance, qualified opportunities and pipeline outcomes—connected in one private workspace.</p>
+          <p>Campaign performance, qualified opportunities and pipeline outcomes connected in one private workspace.</p>
         </div>
         <div className={styles.signalCard}>
           <i><img src="/venluto-brain-3d.png" alt=""/></i>
