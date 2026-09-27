@@ -117,14 +117,17 @@ export async function GET(request: Request) {
     WHERE cc.client_id=${clientId}
     GROUP BY ca.id ORDER BY opportunities DESC,ca.name
   `;
-  if (campaigns.length) totals = {
-    ...totals,
+  const campaignOutbound = {
     peopleContacted: campaigns.reduce((sum, row) => sum + Number(row.contacted), 0),
     emailsSent: campaigns.reduce((sum, row) => sum + Number(row.emails_sent), 0),
     uncontactedLeads: campaigns.reduce((sum, row) => sum + Number(row.uncontacted), 0),
     replies: campaigns.reduce((sum, row) => sum + Number(row.replies), 0),
     positiveReplies: campaigns.reduce((sum, row) => sum + Number(row.positive_replies), 0),
     opportunities: campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
+  };
+  if (campaigns.length) totals = {
+    ...totals,
+    ...campaignOutbound,
   };
   const [snapshot] = await sql`SELECT metrics_json,synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
   let analyticsComplete = false;
@@ -135,7 +138,9 @@ export async function GET(request: Request) {
     // let legacy imports or locally counted replies inflate its selected-period
     // campaign totals. The database remains authoritative only for pipeline
     // milestones and New MRR recorded inside Venluto OS.
-    if (analyticsComplete) {
+    const snapshotHasOutbound = Number(metrics.peopleContacted ?? 0) > 0 || Number(metrics.emailsSent ?? 0) > 0;
+    const campaignsHaveOutbound = campaignOutbound.peopleContacted > 0 || campaignOutbound.emailsSent > 0;
+    if (analyticsComplete && (snapshotHasOutbound || !campaignsHaveOutbound)) {
       totals = {
         ...totals,
         peopleContacted: Number(metrics.peopleContacted ?? 0),
