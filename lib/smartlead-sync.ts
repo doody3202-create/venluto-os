@@ -172,21 +172,14 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
     opportunitySource: string; opportunityRecordsSource?: string; analyticsComplete: boolean;
   } = { peopleContacted: 0, emailsSent: 0, uncontactedLeads: 0, replies: 0, positiveReplies: 0, opportunities: 0, opportunitySource: "smartlead-categories-v7", analyticsComplete: true };
   const completed: Array<{ campaign: Json; externalId: string; stats: Json }> = [];
-  const recentlySyncedRows = await sql`
-    SELECT external_id FROM campaigns
-    WHERE provider='smartlead'
-      AND NULLIF(metadata_json->>${freshnessKey},'')::timestamptz > NOW() - INTERVAL '10 minutes'
-  `;
-  const recentlySynced = new Set(recentlySyncedRows.map(row => String(row.external_id)));
   // Status is not a reporting-period filter: paused and completed campaigns
   // may still contain sends inside the requested date window.
   const candidateCampaigns = campaigns;
-  // An interrupted range may have fresh per-campaign metadata but no complete
-  // aggregate snapshot. In that state every campaign must be rebuilt; skipping
-  // the fresh rows would commit a false zero and leave the UI updating forever.
-  const analyticsCampaigns = analyticsComplete
-    ? candidateCampaigns.filter(campaign => !recentlySynced.has(String(campaign.id ?? campaign.campaign_id ?? "")))
-    : candidateCampaigns;
+  // A published workspace snapshot must be calculated from every matched
+  // campaign. Never omit recently refreshed campaigns here: doing so makes the
+  // aggregate contain only the remaining campaigns and can publish a false
+  // zero (or the same partial total) for an otherwise valid reporting range.
+  const analyticsCampaigns = candidateCampaigns;
   if (analyticsCampaigns.length) {
     const jobs = analyticsCampaigns.flatMap((campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
