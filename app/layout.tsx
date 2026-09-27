@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./royal.css";
+import "./intelligence.css";
 
 export const metadata: Metadata = {
   title: "Venluto OS",
