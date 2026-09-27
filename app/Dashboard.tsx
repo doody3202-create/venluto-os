@@ -350,7 +350,7 @@ export default function Dashboard() {
     } setNewCredential({ name: `${client.name} · rotated key`, apiKey: result.apiKey }); }
     async function setClientKey(apiKey: string) { const client = clients.find(c => c.id === clientId), value = apiKey.trim(); if (!client || !value)
         return false; const r = await fetch('/api/clients', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId, action: 'set_api_key', apiKey: value }) }), result = await r.json(); setToast(r.ok ? (result.message ?? 'TAM API key saved securely') : result.error ?? 'Could not save TAM API key'); return r.ok; }
-    return <main className="shell"><aside className="sidebar"><div className="brand"><span className="brandMark">V</span><span>Venluto <b>OS</b></span></div><nav>
+    return <main className="shell"><aside className="sidebar"><div className="brand"><span className="brandMark"><img src="/venluto-logo.jpeg" alt="Venluto Group"/></span><span>Venluto <b>OS</b></span></div><nav>
   <button data-label="Dashboard" aria-label="Dashboard" className={tab === 'dashboard' ? 'navActive' : ''} onClick={() => setTab('dashboard')}><span>⌂</span><b>Dashboard</b></button>
   {canManage && <button data-label="Client reports" aria-label="Client reports" className={tab === 'reports' ? 'navActive' : ''} onClick={() => setTab('reports')}><span>◈</span><b>Client Reports</b></button>}
   <button data-label="TAM & Segments" aria-label="TAM & Segments" className={tab === 'lists' ? 'navActive' : ''} onClick={openLists}><span>▦</span><b>TAM & Segments</b></button>
