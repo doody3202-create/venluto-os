@@ -166,23 +166,6 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   // the complete master-inbox pagination here delayed large workspaces long
   // enough that their send-volume request never committed.
   const opportunityCounts = new Map<string, number>();
-  const opportunityTotal = n(freshMetrics?.opportunities);
-  const earlyTotals: {
-    peopleContacted: number; emailsSent: number; uncontactedLeads: number;
-    replies: number; positiveReplies: number; opportunities: number;
-    opportunitySource: string; opportunityRecordsSource?: string; analyticsComplete: boolean;
-  } = {
-    peopleContacted: n(freshMetrics?.peopleContacted),
-    emailsSent: n(freshMetrics?.emailsSent),
-    uncontactedLeads: n(freshMetrics?.uncontactedLeads),
-    replies: n(freshMetrics?.replies),
-    positiveReplies: opportunityTotal,
-    opportunities: opportunityTotal,
-    opportunitySource: "smartlead-categories-v7",
-    analyticsComplete: false,
-  };
-  await sql`INSERT INTO campaign_analytics_snapshots(client_id,range_key,metrics_json,synced_at) VALUES (${clientId},${range},${sql.json(earlyTotals)},NOW()) ON CONFLICT(client_id,range_key) DO UPDATE SET metrics_json=EXCLUDED.metrics_json,synced_at=NOW()`;
-
   const totals: {
     peopleContacted: number; emailsSent: number; uncontactedLeads: number;
     replies: number; positiveReplies: number; opportunities: number;

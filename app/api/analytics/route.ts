@@ -127,8 +127,10 @@ export async function GET(request: Request) {
     opportunities: campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
   };
   const [snapshot] = await sql`SELECT metrics_json,synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
+  let analyticsComplete = false;
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
+    analyticsComplete = metrics.analyticsComplete === true;
     // Smartlead is the source of truth for outbound volume and results. Never
     // let legacy imports or locally counted replies inflate its selected-period
     // campaign totals. The database remains authoritative only for pipeline
@@ -169,5 +171,5 @@ export async function GET(request: Request) {
     GROUP BY metric_date ORDER BY metric_date
   `;
   const comparison = Object.fromEntries(Object.keys(totals).map((key) => [key, pct(totals[key as keyof typeof totals], previous[key as keyof typeof previous])]));
-  return Response.json({ client, range, totals, syncedAt: snapshot?.synced_at ?? null, comparison, ratios: { positiveReply: totals.opportunities ? Math.round(totals.peopleContacted / totals.opportunities) : null, meeting: totals.meetingsBooked ? Math.round(totals.emailsSent / totals.meetingsBooked) : null }, campaigns, inbox, activity, demoMode: process.env.DEMO_MODE !== "false" });
+  return Response.json({ client, range, totals, analyticsComplete, syncedAt: snapshot?.synced_at ?? null, comparison, ratios: { positiveReply: totals.opportunities ? Math.round(totals.peopleContacted / totals.opportunities) : null, meeting: totals.meetingsBooked ? Math.round(totals.emailsSent / totals.meetingsBooked) : null }, campaigns, inbox, activity, demoMode: process.env.DEMO_MODE !== "false" });
 }
