@@ -153,26 +153,13 @@ export async function GET(request: Request) {
   previous.meetingsCompleted = Number(priorPipeline.meetings_completed);
 
   const peopleKey = `people_contacted_${range}`, emailsKey = `emails_sent_${range}`, uncontactedKey = `uncontacted_leads_${range}`, repliesKey = `replies_${range}`, positiveKey = `positive_replies_${range}`;
-  const isWiderThanThirtyDays = range === "60d" || range === "90d" || range === "all";
   const campaigns = await sql`
     SELECT ca.id,ca.name,ca.external_id,ca.metadata_json->>'status' status,
-      GREATEST(
-        COALESCE((ca.metadata_json->>${peopleKey})::int,COALESCE(SUM(dm.people_contacted),0)::int),
-        CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'people_contacted_30d')::int,0) ELSE 0 END
-      ) contacted,
-      GREATEST(
-        COALESCE((ca.metadata_json->>${emailsKey})::int,COALESCE(SUM(dm.emails_sent),0)::int),
-        CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'emails_sent_30d')::int,0) ELSE 0 END
-      ) emails_sent,
+      COALESCE((ca.metadata_json->>${peopleKey})::int,COALESCE(SUM(dm.people_contacted),0)::int) contacted,
+      COALESCE((ca.metadata_json->>${emailsKey})::int,COALESCE(SUM(dm.emails_sent),0)::int) emails_sent,
       COALESCE((ca.metadata_json->>${uncontactedKey})::int,COALESCE(SUM(dm.uncontacted_leads),0)::int) uncontacted,
-      GREATEST(
-        COALESCE((ca.metadata_json->>${repliesKey})::int,COUNT(DISTINCT r.id)::int),
-        CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'replies_30d')::int,0) ELSE 0 END
-      ) replies,
-      GREATEST(
-        COALESCE((ca.metadata_json->>${positiveKey})::int,COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int),
-        CASE WHEN ${isWiderThanThirtyDays} THEN COALESCE((ca.metadata_json->>'positive_replies_30d')::int,0) ELSE 0 END
-      ) positive_replies,
+      COALESCE((ca.metadata_json->>${repliesKey})::int,COUNT(DISTINCT r.id)::int) replies,
+      COALESCE((ca.metadata_json->>${positiveKey})::int,COUNT(DISTINCT r.id) FILTER(WHERE r.sentiment='positive')::int) positive_replies,
       GREATEST(
         COALESCE((ca.metadata_json->>${positiveKey})::int,0),
         COUNT(DISTINCT p.id) FILTER(WHERE LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request'))::int
@@ -209,29 +196,22 @@ export async function GET(request: Request) {
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
     snapshotIsComplete = metrics.analyticsComplete === true;
-    const [thirtyDaySnapshot] = isWiderThanThirtyDays
-      ? await sql`SELECT metrics_json FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key='30d'`
-      : [];
-    const thirtyDayMetrics = typeof thirtyDaySnapshot?.metrics_json === "string"
-      ? JSON.parse(thirtyDaySnapshot.metrics_json)
-      : (thirtyDaySnapshot?.metrics_json ?? {});
     // Smartlead is the source of truth for outbound volume and results. Never
     // let legacy imports or locally counted replies inflate its selected-period
     // campaign totals. The database remains authoritative only for pipeline
     // milestones and New MRR recorded inside Venluto OS.
     totals = {
       ...totals,
-      peopleContacted: Math.max(Number(metrics.peopleContacted ?? 0), Number(thirtyDayMetrics.peopleContacted ?? 0), totals.peopleContacted),
-      emailsSent: Math.max(Number(metrics.emailsSent ?? 0), Number(thirtyDayMetrics.emailsSent ?? 0), totals.emailsSent),
+      peopleContacted: Number(metrics.peopleContacted ?? 0),
+      emailsSent: Number(metrics.emailsSent ?? 0),
       uncontactedLeads: Number(metrics.uncontactedLeads ?? 0),
-      replies: Math.max(Number(metrics.replies ?? 0), Number(thirtyDayMetrics.replies ?? 0), totals.replies),
-      positiveReplies: Math.max(Number(metrics.positiveReplies ?? 0), Number(thirtyDayMetrics.positiveReplies ?? 0), totals.positiveReplies),
-      opportunities: Math.max(Number(metrics.opportunities ?? 0), Number(thirtyDayMetrics.opportunities ?? 0), totals.opportunities),
+      replies: Number(metrics.replies ?? 0),
+      positiveReplies: Number(metrics.positiveReplies ?? 0),
+      opportunities: Number(metrics.opportunities ?? 0),
     };
   }
   const clientKeyword = String(client.campaign_match_keyword ?? client.name);
-  const needsLiveRange = totals.peopleContacted === 0 || !snapshotIsComplete
-    || (clientKeyword.toLowerCase() === "celadonsoft" && isWiderThanThirtyDays);
+  const needsLiveRange = totals.peopleContacted === 0 || !snapshotIsComplete;
   if (needsLiveRange && campaigns.length) {
     const live = await liveRangeCampaigns(clientKeyword, range);
     if (live.size) {
