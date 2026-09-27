@@ -181,7 +181,12 @@ async function performSmartleadCampaignSync(force = false, range: RangeKey = "30
   // Status is not a reporting-period filter: paused and completed campaigns
   // may still contain sends inside the requested date window.
   const candidateCampaigns = campaigns;
-  const analyticsCampaigns = candidateCampaigns.filter(campaign => !recentlySynced.has(String(campaign.id ?? campaign.campaign_id ?? "")));
+  // An interrupted range may have fresh per-campaign metadata but no complete
+  // aggregate snapshot. In that state every campaign must be rebuilt; skipping
+  // the fresh rows would commit a false zero and leave the UI updating forever.
+  const analyticsCampaigns = analyticsComplete
+    ? candidateCampaigns.filter(campaign => !recentlySynced.has(String(campaign.id ?? campaign.campaign_id ?? "")))
+    : candidateCampaigns;
   if (analyticsCampaigns.length) {
     const jobs = analyticsCampaigns.flatMap((campaign) => {
       const externalId = String(campaign.id ?? campaign.campaign_id ?? "");
