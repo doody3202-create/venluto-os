@@ -135,15 +135,17 @@ export async function GET(request: Request) {
     // let legacy imports or locally counted replies inflate its selected-period
     // campaign totals. The database remains authoritative only for pipeline
     // milestones and New MRR recorded inside Venluto OS.
-    totals = {
-      ...totals,
-      peopleContacted: Number(metrics.peopleContacted ?? 0),
-      emailsSent: Number(metrics.emailsSent ?? 0),
-      uncontactedLeads: Number(metrics.uncontactedLeads ?? 0),
-      replies: Number(metrics.replies ?? 0),
-      positiveReplies: Number(metrics.positiveReplies ?? 0),
-      opportunities: Number(metrics.opportunities ?? 0),
-    };
+    if (analyticsComplete) {
+      totals = {
+        ...totals,
+        peopleContacted: Number(metrics.peopleContacted ?? 0),
+        emailsSent: Number(metrics.emailsSent ?? 0),
+        uncontactedLeads: Number(metrics.uncontactedLeads ?? 0),
+        replies: Number(metrics.replies ?? 0),
+        positiveReplies: Number(metrics.positiveReplies ?? 0),
+        opportunities: Number(metrics.opportunities ?? 0),
+      };
+    }
   }
   // Opportunity records are already imported from Smartlead with their real
   // reply timestamps. They are the authoritative source for period filtering;
