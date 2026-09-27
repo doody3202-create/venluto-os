@@ -21,5 +21,5 @@ export async function GET(request:Request){
  await ensureDatabase();const token=new URL(request.url).searchParams.get("token")??"";
  if(!/^[A-Za-z0-9_-]{20,40}$/.test(token))return Response.json({error:"Report not found"},{status:404,headers:{"access-control-allow-origin":"*"}});
  const [row]=await sql`SELECT snapshot_json,created_at FROM report_snapshots WHERE token=${token}`;if(!row)return Response.json({error:"Report not found"},{status:404,headers:{"access-control-allow-origin":"*"}});
- return Response.json(row.snapshot_json,{headers:{"access-control-allow-origin":"*","cache-control":"public, max-age=60, s-maxage=300"}});
+ const snapshot=typeof row.snapshot_json==="string"?JSON.parse(row.snapshot_json):row.snapshot_json;return Response.json(snapshot,{headers:{"access-control-allow-origin":"*","cache-control":"public, max-age=60, s-maxage=300"}});
 }
