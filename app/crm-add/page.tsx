@@ -3,7 +3,7 @@ export default function CrmAddPage() {
     <h1 style={{margin:0}}>Add positive opportunity</h1>
     <input type="hidden" name="clientId" value="0"/>
     <label>Lead name<input name="name" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
-    <label>Email<input name="email" type="email" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
+    <label>Email<input name="email" inputMode="email" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
     <label>Company<input name="company" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
     <label>Exact campaign<input name="campaign" required style={{display:'block',width:'100%',padding:13,marginTop:7}}/></label>
     <label>Positive reply<textarea name="reply" required style={{display:'block',width:'100%',minHeight:110,padding:13,marginTop:7}}/></label>
