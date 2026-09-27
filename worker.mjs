@@ -1,9 +1,32 @@
 import postgres from "postgres";
+import {createHash} from "node:crypto";
 
 const sql=postgres(process.env.DATABASE_URL,{max:3,idle_timeout:20});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 const appUrl=process.env.APP_URL||"https://venluto-os-production.up.railway.app";
+const analyticsIntervalMs=Math.max(5,Number(process.env.ANALYTICS_REFRESH_MINUTES||15))*60_000;
+const analyticsRanges=['7d','30d','60d','90d','all'];
+let nextAnalyticsRefreshAt=0,analyticsRefresh=null;
+
+async function refreshAnalyticsSnapshots(){
+ if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is not configured');
+ const clients=await sql`SELECT id,name FROM clients WHERE status='active' ORDER BY id`;
+ const signature=createHash('sha256').update(`venluto-analytics:${process.env.DATABASE_URL}`).digest('hex');
+ console.log('Background analytics refresh started',{clients:clients.length,ranges:analyticsRanges.length});
+ for(const client of clients)for(const range of analyticsRanges){
+  const response=await fetch(`${appUrl}/api/internal/analytics-refresh`,{method:'POST',headers:{'content-type':'application/json','x-venluto-worker-signature':signature},body:JSON.stringify({clientId:Number(client.id),range})});
+  if(!response.ok){const detail=(await response.text()).slice(0,300);console.error('Background analytics range failed',{client:client.name,range,status:response.status,detail});continue}
+  console.log('Background analytics range refreshed',{client:client.name,range});
+ }
+ console.log('Background analytics refresh completed');
+}
+
+function scheduleAnalyticsRefresh(){
+ if(analyticsRefresh||Date.now()<nextAnalyticsRefreshAt)return;
+ nextAnalyticsRefreshAt=Date.now()+analyticsIntervalMs;
+ analyticsRefresh=refreshAnalyticsSnapshots().catch(error=>console.error('Background analytics refresh failed',error)).finally(()=>{analyticsRefresh=null});
+}
 function errorPayload(job,message){return{text:`⚠️ Venluto OS integration failed`,attachments:[{color:"#E01E5A",blocks:[{type:"header",text:{type:"plain_text",text:"⚠️  Integration needs attention",emoji:true}},{type:"section",fields:[{type:"mrkdwn",text:`*Provider*\n${job.provider}`},{type:"mrkdwn",text:`*Operation*\n${job.operation}`}]},{type:"section",text:{type:"mrkdwn",text:`*What happened*\n\`${message}\``}},{type:"actions",elements:[{type:"button",style:"danger",text:{type:"plain_text",text:"Review in Venluto OS"},url:appUrl}]},{type:"context",elements:[{type:"mrkdwn",text:"*Venluto OS*  •  Retry safely from Today"}]}]}]}}
 async function postSlack(payload){
  if(!process.env.SLACK_WEBHOOK_URL)throw new Error("SLACK_WEBHOOK_URL is not configured");
@@ -45,5 +68,5 @@ async function processCal(job){
 }
 
 async function claim(){return sql.begin(async tx=>{const [job]=await tx`SELECT * FROM sync_jobs WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at<=NOW()) AND (locked_at IS NULL OR locked_at<NOW()-INTERVAL '10 minutes') ORDER BY updated_at ASC FOR UPDATE SKIP LOCKED LIMIT 1`;if(!job)return null;await tx`UPDATE sync_jobs SET locked_at=NOW(),status='processing',updated_at=NOW() WHERE id=${job.id}`;return job})}
-async function run(){console.log("Venluto worker started",{demo:process.env.DEMO_MODE!=="false"});while(true){let job;try{job=await claim();if(!job){await sleep(2000);continue}if(job.provider==='close'&&job.operation==='upsert_prospect')await processClose(job);else if(job.provider==='cal.com'&&job.operation==='reconcile_booking')await processCal(job);else if(job.provider==='slack'&&job.operation==='send_notification')await postSlack(job.payload_json.payload??job.payload_json.text);else throw new Error(`Unsupported job ${job.provider}:${job.operation}`);await sql`UPDATE sync_jobs SET status='succeeded',attempts=attempts+1,last_error=NULL,locked_at=NULL,updated_at=NOW() WHERE id=${job.id}`;console.log("Sync succeeded",{jobId:job.id,provider:job.provider})}catch(error){console.error("Sync failed",error);if(job){const message=error instanceof Error?error.message:'Unknown error';await sql`UPDATE sync_jobs SET status='failed',attempts=attempts+1,last_error=${message},locked_at=NULL,next_retry_at=NOW()+INTERVAL '5 minutes',updated_at=NOW() WHERE id=${job.id}`;const manual=Boolean(job.payload_json?._manual_retry);if(!manual&&job.provider!=='slack'&&process.env.SLACK_WEBHOOK_URL)try{await postSlack(errorPayload(job,message))}catch(slackError){console.error("Slack failure alert failed",slackError)}}await sleep(2000)}}}
+async function run(){console.log("Venluto worker started",{demo:process.env.DEMO_MODE!=="false",analyticsRefreshMinutes:analyticsIntervalMs/60_000});while(true){let job;try{scheduleAnalyticsRefresh();job=await claim();if(!job){await sleep(2000);continue}if(job.provider==='close'&&job.operation==='upsert_prospect')await processClose(job);else if(job.provider==='cal.com'&&job.operation==='reconcile_booking')await processCal(job);else if(job.provider==='slack'&&job.operation==='send_notification')await postSlack(job.payload_json.payload??job.payload_json.text);else throw new Error(`Unsupported job ${job.provider}:${job.operation}`);await sql`UPDATE sync_jobs SET status='succeeded',attempts=attempts+1,last_error=NULL,locked_at=NULL,updated_at=NOW() WHERE id=${job.id}`;console.log("Sync succeeded",{jobId:job.id,provider:job.provider})}catch(error){console.error("Sync failed",error);if(job){const message=error instanceof Error?error.message:'Unknown error';await sql`UPDATE sync_jobs SET status='failed',attempts=attempts+1,last_error=${message},locked_at=NULL,next_retry_at=NOW()+INTERVAL '5 minutes',updated_at=NOW() WHERE id=${job.id}`;const manual=Boolean(job.payload_json?._manual_retry);if(!manual&&job.provider!=='slack'&&process.env.SLACK_WEBHOOK_URL)try{await postSlack(errorPayload(job,message))}catch(slackError){console.error("Slack failure alert failed",slackError)}}await sleep(2000)}}}
 process.on('SIGTERM',async()=>{await sql.end();process.exit(0)});run();

@@ -329,23 +329,8 @@ export default function Dashboard() {
         await load(clientId);
         await loadAnalytics(clientId, range);
     } }); }, [clientId, load, range]);
-    useEffect(() => { const client = clients.find(c => c.id === clientId); if (!client)
-        return; let cancelled = false, retried = false, retryTimer = 0, pollTimer = 0; const poll = () => { if (cancelled)
-        return; void loadAnalytics(clientId, range); pollTimer = window.setTimeout(poll, 3000); }; const sync = async () => { if (cancelled)
-        return; poll(); const response = await fetch(`/api/integrations/smartlead/sync?clientId=${clientId}&range=${range}`, { method: 'POST' }); if (cancelled)
-        return; window.clearTimeout(pollTimer); if (response.ok) {
-        await load(clientId);
-        await loadAnalytics(clientId, range);
-        const current = await fetch(`/api/analytics?clientId=${clientId}&range=${range}`, { cache: 'no-store' });
-        if (current.ok) {
-            const result = await current.json() as AnalyticsData;
-            if (Number(result.totals.peopleContacted) > 0 || Number(result.totals.emailsSent) > 0 || result.campaigns.length === 0)
-                return;
-        }
-    } if (!retried) {
-        retried = true;
-        retryTimer = window.setTimeout(sync, 65000);
-    } }; const timer = window.setTimeout(sync, 300); return () => { cancelled = true; window.clearTimeout(timer); window.clearTimeout(retryTimer); window.clearTimeout(pollTimer); }; }, [clientId, clients, range]);
+    useEffect(() => { if (!clientId)
+        return; const timer = window.setInterval(() => { void loadAnalytics(clientId, range); }, 60_000); return () => window.clearInterval(timer); }, [clientId, range]);
     async function openLists() { setTab('lists'); if (!tam || tam.client.id !== clientId)
         await loadTam(); }
     async function changeClient(id: number) { setClientId(id); localStorage.setItem('venlutoClientId', String(id)); setTam(null); setAnalytics(null); if (tab === 'lists')
