@@ -9,5 +9,23 @@
 /* Opportunity categories need strong contrast on the light reply cards. */
 .readOnlyInbox .positiveReplyHead h3 span{display:inline-flex;align-items:center;margin-left:8px;border:1px solid #4f388f;border-radius:999px;background:linear-gradient(135deg,#24183f,#50309b);padding:4px 8px;color:#fff;box-shadow:0 5px 13px rgba(43,27,78,.18);font-size:7px;font-weight:950;letter-spacing:.04em;text-transform:uppercase}
 
-/* Lead review follows the same light Venluto workspace system. */
-.drawerBackdrop{background:rgba(29,20,63,.34);backdrop-filter:blur(9px)}.drawer{border:1px solid #d8cff0;background:radial-gradient(circle at 90% 4%,rgba(181,159,246,.24),transparent 28%),linear-gradient(145deg,#fff,#f7f4ff);color:#211a38;box-shadow:-18px 0 58px rgba(45,29,91,.20)}.drawerClose{border:1px solid #ddd5ef;background:#eee9fb;color:#4f3a82;box-shadow:0 7px 18px rgba(67,44,126,.10)}.drawerClose:hover{background:#dfd5f8;color:#321d70}.drawer .detailHead .personAvatar{border:1px solid #c9b9ef;background:linear-gradient(145deg,#e7dfff,#cdbdf5);color:#4b2da2}.drawer .detailHead h2,.drawer h2,.drawer h3,.drawer dd{color:#211a38}.drawer .detailHead p,.drawer dt,.drawer .detailSection small{color:#766e86}.drawer .statusPill{border:1px solid #cbbbef;background:#e9e1fb;color:#5532b4;font-weight:900}.drawer .stageControl{border:1px solid #d8cff0;background:rgba(255,255,255,.72);box-shadow:0 8px 22px rgba(69,45,135,.05)}.drawer .stageControl span,.drawer .dealEditor span{color:#6843d2}.drawer .stageControl select,.drawer .dealEditor input,.drawer .dealEditor label{border-color:#d6cbed;background:#fff;color:#251d3d}.drawer .stageControl select:focus,.drawer .dealEditor input:focus{outline:2px solid rgba(107,70,223,.18);border-color:#9278db}.drawer dl div{border-bottom-color:#e5def1}.drawer .dealEditor{border:1px solid #d8cff0;background:rgba(255,255,255,.72);box-shadow:0 8px 22px rgba(69,45,135,.05)}.drawer .dealEditor button,.drawer .detailActions button,.drawer .detailActions a{background:linear-gradient(135deg,#7656e7,#5145d3);color:#fff;box-shadow:0 8px 19px rgba(80,57,184,.20)}.drawer .detailActions .secondary{border:1px solid #ddd5ef;background:#eeeaf7;color:#554d68;box-shadow:none}.drawer .detailActions .quietDanger{border:1px solid #efd2d0!important;background:#fff1f0!important;color:#b14947!important;box-shadow:none}.drawer .detailSection blockquote{border-left-color:#7656e7;background:#f0ebfb;color:#4e465d}.drawer input[type="date"]{color-scheme:light}
+/* Lead review follows the same light Venluto workspace system. Important flags
+   intentionally override the legacy theme block that is still loaded globally. */
+.drawerBackdrop{background:rgba(29,20,63,.34)!important;backdrop-filter:blur(9px)!important}
+.drawer{border-color:#d8cff0!important;background:radial-gradient(circle at 90% 4%,rgba(181,159,246,.24),transparent 28%),linear-gradient(145deg,#fff,#f7f4ff)!important;color:#211a38!important;box-shadow:-18px 0 58px rgba(45,29,91,.20)!important}
+.drawerClose{border:1px solid #ddd5ef!important;background:#eee9fb!important;color:#4f3a82!important;box-shadow:0 7px 18px rgba(67,44,126,.10)!important}
+.drawerClose:hover{background:#dfd5f8!important;color:#321d70!important}
+.drawer .detailHead .personAvatar{border:1px solid #c9b9ef!important;background:linear-gradient(145deg,#e7dfff,#cdbdf5)!important;color:#4b2da2!important}
+.drawer .detailHead h2,.drawer h2,.drawer h3,.drawer dd{color:#211a38!important}
+.drawer .detailHead p,.drawer dt,.drawer .detailSection small{color:#766e86!important}
+.drawer .statusPill{border:1px solid #cbbbef!important;background:#e9e1fb!important;color:#5532b4!important;font-weight:900}
+.drawer .stageControl,.drawer .dealEditor{border-color:#d8cff0!important;background:rgba(255,255,255,.72)!important;box-shadow:0 8px 22px rgba(69,45,135,.05)!important}
+.drawer .stageControl span,.drawer .dealEditor span{color:#6843d2!important}
+.drawer .stageControl select,.drawer .dealEditor input,.drawer .dealEditor label{border-color:#d6cbed!important;background:#fff!important;color:#251d3d!important}
+.drawer .stageControl select:focus,.drawer .dealEditor input:focus{outline:2px solid rgba(107,70,223,.18)!important;border-color:#9278db!important}
+.drawer dl div{border-bottom-color:#e5def1!important}
+.drawer .dealEditor button,.drawer .detailActions button,.drawer .detailActions a{background:linear-gradient(135deg,#7656e7,#5145d3)!important;color:#fff!important;box-shadow:0 8px 19px rgba(80,57,184,.20)!important}
+.drawer .detailActions .secondary{border:1px solid #ddd5ef!important;background:#eeeaf7!important;color:#554d68!important;box-shadow:none!important}
+.drawer .detailActions .quietDanger{border:1px solid #efd2d0!important;background:#fff1f0!important;color:#b14947!important;box-shadow:none!important}
+.drawer .detailSection blockquote{border-left-color:#7656e7!important;background:#f0ebfb!important;color:#4e465d!important}
+.drawer input[type="date"]{color-scheme:light}
