@@ -40,5 +40,9 @@ export async function POST(request: Request) {
   else await sql`UPDATE prospects SET company_id=${company.id},status='action_due',pipeline_tag='opportunity',next_action='Reply to opportunity',deadline_at=NOW(),updated_at=NOW() WHERE id=${prospect.id}`;
   await sql`INSERT INTO client_prospects(client_id,prospect_id) VALUES (${clientId},${prospect.id}) ON CONFLICT DO NOTHING`;
   await sql`INSERT INTO replies(prospect_id,campaign_id,provider_reply_id,body,sentiment,reply_category,received_at) VALUES (${prospect.id},${campaign.id},${`manual:${clientId}:${email}:${campaign.id}`},${reply},'positive','Interested',NOW()) ON CONFLICT(provider_reply_id) DO UPDATE SET body=EXCLUDED.body,sentiment='positive',reply_category='Interested',received_at=NOW()`;
-  return Response.redirect(new URL("/", request.url), 303);
+  // Railway exposes the app internally as localhost:8080, so request.url is
+  // not a safe public redirect target. Always send the browser back to the
+  // public desk domain after a successful CRM save.
+  const publicOrigin = process.env.PUBLIC_APP_URL ?? "https://desk.group-venluto.com";
+  return Response.redirect(new URL("/", publicOrigin), 303);
 }
