@@ -4,76 +4,6 @@ export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
-const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const smartleadGet = async (url: string) => {
-  let response = await fetch(url, { cache: "no-store" });
-  for (let attempt = 0; attempt < 3 && (response.status === 429 || response.status >= 500); attempt++) {
-    const retryAfter = Number(response.headers.get("retry-after") ?? 0);
-    await wait(retryAfter > 0 ? Math.min(retryAfter * 1000, 12_000) : 1_500 * (attempt + 1));
-    response = await fetch(url, { cache: "no-store" });
-  }
-  return response;
-};
-const liveRangeCache = new Map<string, { expires: number; promise: Promise<Map<string, Record<string, unknown>>> }>();
-const liveRangeCampaigns = (keyword: string, range: RangeKey) => {
-  const cacheKey = `all-matching-campaigns-v2:${keyword}:${range}`;
-  const cached = liveRangeCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) return cached.promise;
-  const promise = (async () => {
-    const apiKey = process.env.SMARTLEAD_API_KEY;
-    const result = new Map<string, Record<string, unknown>>();
-    if (!apiKey) return result;
-    const end = new Date(), start = new Date(end);
-    start.setUTCDate(start.getUTCDate() - (daysFor(range) - 1));
-    const startDate = start.toISOString().slice(0, 10), endDate = end.toISOString().slice(0, 10);
-    const discovery = await smartleadGet(`https://server.smartlead.ai/api/v1/campaigns/?api_key=${encodeURIComponent(apiKey)}`);
-    if (!discovery.ok) return result;
-    const payload = await discovery.json() as Record<string, unknown> | Array<Record<string, unknown>>;
-    const all = Array.isArray(payload) ? payload : (payload.campaigns ?? payload.data ?? []) as Array<Record<string, unknown>>;
-    // A paused or completed campaign can still have sends inside the selected
-    // reporting window. Match by client name only; the date endpoint is what
-    // determines whether that campaign contributes to this range.
-    const matched = all.filter(campaign => String(campaign.name ?? "").toLowerCase().includes(keyword.toLowerCase()));
-    const windows: Array<{start:string;end:string}> = [];
-    if (range === "all") windows.push({ start: "", end: "" });
-    else for (let cursor = new Date(`${startDate}T00:00:00Z`), final = new Date(`${endDate}T00:00:00Z`); cursor <= final;) {
-      const chunkEnd = new Date(Math.min(final.getTime(), cursor.getTime() + 29 * 86400000));
-      windows.push({ start: cursor.toISOString().slice(0,10), end: chunkEnd.toISOString().slice(0,10) });
-      cursor = new Date(chunkEnd.getTime() + 86400000);
-    }
-    const jobs = matched.flatMap(campaign => windows.map(window => ({ campaign, window })));
-    const partial = new Map<string, Record<string, unknown>[]>();
-    let complete = true;
-    for (let index = 0; index < jobs.length; index += 5) {
-      const rows = await Promise.all(jobs.slice(index, index + 5).map(async ({campaign,window}) => {
-        const id = String(campaign.id ?? campaign.campaign_id ?? "");
-        if (!id) return null;
-        const endpoint = range === "all"
-          ? `https://server.smartlead.ai/api/v1/campaigns/${id}/analytics?api_key=${encodeURIComponent(apiKey)}`
-          : `https://server.smartlead.ai/api/v1/campaigns/${id}/analytics-by-date?start_date=${window.start}&end_date=${window.end}&api_key=${encodeURIComponent(apiKey)}`;
-        const response = await smartleadGet(endpoint);
-        if (!response.ok) complete = false;
-        return response.ok ? { id, stats: await response.json() as Record<string, unknown> } : null;
-      }));
-      for (const row of rows) if (row) partial.set(row.id, [...(partial.get(row.id) ?? []), row.stats]);
-      if (index + 5 < jobs.length) await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    if (!complete) return result;
-    for (const [id, rows] of partial) result.set(id, {
-      unique_sent_count: rows.reduce((sum,row)=>sum+Number(row.unique_sent_count??0),0),
-      sent_count: rows.reduce((sum,row)=>sum+Number(row.sent_count??0),0),
-      reply_count: rows.reduce((sum,row)=>sum+Number(row.reply_count??0),0),
-    });
-    return result;
-  })();
-  liveRangeCache.set(cacheKey, { expires: Date.now() + 10 * 60_000, promise });
-  void promise.then(result => {
-    // Never preserve a transient rate-limit/server failure as a valid zero.
-    // A later dashboard poll must be allowed to retry the exact range.
-    if (result.size === 0) liveRangeCache.delete(cacheKey);
-  }).catch(() => liveRangeCache.delete(cacheKey));
-  return promise;
-};
 
 export async function GET(request: Request) {
   await ensureDatabase();
@@ -192,10 +122,8 @@ export async function GET(request: Request) {
     opportunities: campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
   };
   const [snapshot] = await sql`SELECT metrics_json,synced_at FROM campaign_analytics_snapshots WHERE client_id=${clientId} AND range_key=${range}`;
-  let snapshotIsComplete = false;
   if (snapshot?.metrics_json) {
     const metrics = typeof snapshot.metrics_json === "string" ? JSON.parse(snapshot.metrics_json) : snapshot.metrics_json;
-    snapshotIsComplete = metrics.analyticsComplete === true;
     // Smartlead is the source of truth for outbound volume and results. Never
     // let legacy imports or locally counted replies inflate its selected-period
     // campaign totals. The database remains authoritative only for pipeline
@@ -209,23 +137,6 @@ export async function GET(request: Request) {
       positiveReplies: Number(metrics.positiveReplies ?? 0),
       opportunities: Number(metrics.opportunities ?? 0),
     };
-  }
-  const clientKeyword = String(client.campaign_match_keyword ?? client.name);
-  const needsLiveRange = totals.peopleContacted === 0 || !snapshotIsComplete;
-  if (needsLiveRange && campaigns.length) {
-    const live = await liveRangeCampaigns(clientKeyword, range);
-    if (live.size) {
-      for (const campaign of campaigns) {
-        const stats = live.get(String(campaign.external_id));
-        if (!stats) continue;
-        campaign.contacted = Number(stats.unique_sent_count ?? stats.people_contacted ?? 0);
-        campaign.emails_sent = Number(stats.sent_count ?? stats.emails_sent ?? 0);
-        campaign.replies = Math.max(Number(campaign.replies), Number(stats.reply_count ?? stats.replies ?? 0));
-      }
-      totals.peopleContacted = campaigns.reduce((sum, row) => sum + Number(row.contacted), 0);
-      totals.emailsSent = campaigns.reduce((sum, row) => sum + Number(row.emails_sent), 0);
-      totals.replies = campaigns.reduce((sum, row) => sum + Number(row.replies), 0);
-    }
   }
   const inbox = await sql`
     SELECT * FROM (
