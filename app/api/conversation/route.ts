@@ -43,6 +43,6 @@ export async function GET(request: Request) {
     sender_email: String(message.direction ?? "").toLowerCase() === "inbound" ? lead.email : null,
     body: plain(String(message.body ?? message.email_body ?? "")),
     sent_at: String(message.received_at ?? message.sent_at ?? message.time ?? new Date().toISOString()),
-  })).filter(message => message.body);
+  })).filter(message => message.body).sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
   return Response.json({ messages });
 }
