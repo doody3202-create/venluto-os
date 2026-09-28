@@ -18,16 +18,20 @@ const records = (payload: unknown): Array<Record<string, unknown>> => {
 const exactEmail = (row: Record<string, unknown>, email: string) =>
   String(row.email ?? (row.lead as Record<string, unknown> | undefined)?.email ?? "").toLowerCase() === email.toLowerCase();
 
-async function resolveSmartleadLeadId(apiKey: string, campaignId: string, email: string, inboxRow?: Record<string, unknown>) {
+async function resolveSmartleadLead(apiKey: string, campaignId: string, email: string, inboxRow?: Record<string, unknown>) {
   const nestedLead = inboxRow?.lead as Record<string, unknown> | undefined;
-  if (nestedLead?.id) return nestedLead.id;
+  if (nestedLead?.id) return { id: nestedLead.id, campaignIds: [campaignId] };
 
   // email_lead_id and campaign_lead_map_id are relationship IDs, not the lead
   // ID required by Smartlead's definitive message-history endpoint.
   const lookup = await fetch(`https://server.smartlead.ai/api/v1/leads/?api_key=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}`, { cache: "no-store" });
   if (lookup.ok) {
     const match = records(await lookup.json()).find(row => exactEmail(row, email));
-    if (match?.id ?? match?.lead_id) return match.id ?? match.lead_id;
+    if (match?.id ?? match?.lead_id) {
+      const memberships = Array.isArray(match.lead_campaign_data) ? match.lead_campaign_data as Array<Record<string, unknown>> : [];
+      const campaignIds = memberships.map(item => item.campaign_id).filter(Boolean).map(String);
+      return { id: match.id ?? match.lead_id, campaignIds: [...new Set([campaignId, ...campaignIds])] };
+    }
   }
 
   // Some Smartlead accounts do not expose the global email lookup. Resolve the
@@ -38,7 +42,8 @@ async function resolveSmartleadLeadId(apiKey: string, campaignId: string, email:
     if (!response.ok) break;
     const rows = records(await response.json());
     const match = rows.find(row => exactEmail(row, email));
-    if (match?.id ?? match?.lead_id) return match.id ?? match.lead_id;
+    const matchedLead = match?.lead as Record<string, unknown> | undefined;
+    if (matchedLead?.id ?? match?.id ?? match?.lead_id) return { id: matchedLead?.id ?? match?.id ?? match?.lead_id, campaignIds: [campaignId] };
     if (rows.length < 100) break;
   }
   return undefined;
@@ -56,6 +61,7 @@ export async function GET(request: Request) {
     JOIN prospects p ON p.id=cp.prospect_id
     JOIN replies r ON r.prospect_id=p.id
     JOIN campaigns ca ON ca.id=r.campaign_id AND ca.provider='smartlead'
+    JOIN client_campaigns cc ON cc.campaign_id=ca.id AND cc.client_id=cp.client_id
     WHERE cp.client_id=${clientId} AND p.id=${prospectId}
     ORDER BY r.received_at DESC LIMIT 1
   `;
@@ -63,16 +69,20 @@ export async function GET(request: Request) {
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return Response.json({ error: "Smartlead is not configured" }, { status: 503 });
   let history: Array<Record<string, unknown>> = [];
-  const smartleadLeadId = await resolveSmartleadLeadId(apiKey, String(lead.campaign_external_id), String(lead.email));
+  const smartleadLead = await resolveSmartleadLead(apiKey, String(lead.campaign_external_id), String(lead.email));
+  const clientCampaignRows = await sql`SELECT ca.external_id FROM campaigns ca JOIN client_campaigns cc ON cc.campaign_id=ca.id WHERE cc.client_id=${clientId} AND ca.provider='smartlead'`;
+  const clientCampaignIds = new Set(clientCampaignRows.map(row => String(row.external_id)));
   // Go straight to Smartlead's definitive per-lead history. Master Inbox can
   // lag after an agent sends a reply and must never be the primary source.
-  if (smartleadLeadId) {
-    const historyResponse = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${encodeURIComponent(String(lead.campaign_external_id))}/leads/${encodeURIComponent(String(smartleadLeadId))}/message-history?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
-    if (historyResponse.ok) {
+  if (smartleadLead) {
+    const permittedCampaignIds = smartleadLead.campaignIds.filter(campaignId => clientCampaignIds.has(campaignId));
+    const histories = await Promise.all(permittedCampaignIds.map(async campaignId => {
+      const historyResponse = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${encodeURIComponent(campaignId)}/leads/${encodeURIComponent(String(smartleadLead.id))}/message-history?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+      if (!historyResponse.ok) return [];
       const historyPayload = await historyResponse.json() as Array<Record<string, unknown>> | { history?: Array<Record<string, unknown>>; message_history?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
-      const definitive = Array.isArray(historyPayload) ? historyPayload : historyPayload.history ?? historyPayload.message_history ?? historyPayload.data ?? [];
-      if (definitive.length) history = definitive;
-    }
+      return Array.isArray(historyPayload) ? historyPayload : historyPayload.history ?? historyPayload.message_history ?? historyPayload.data ?? [];
+    }));
+    history = histories.flat();
   }
   // Compatibility fallback for the rare account where lead lookup/history is
   // unavailable. This is deliberately secondary because inbox history can lag.
@@ -103,6 +113,10 @@ export async function GET(request: Request) {
   };
   }).filter(message => message.body);
   const savedMessages = await sql`SELECT id::text id,direction,sender_name,sender_email,body,sent_at::text sent_at FROM conversation_messages WHERE prospect_id=${prospectId} ORDER BY sent_at DESC`;
-  const messages = [...liveMessages, ...savedMessages].filter((message, index, all) => all.findIndex(candidate => String(candidate.body).trim() === String(message.body).trim()) === index).sort((a, b) => new Date(String(b.sent_at)).getTime() - new Date(String(a.sent_at)).getTime());
+  const liveBodies = new Set(liveMessages.map(message => `${message.direction}:${message.body.trim()}`));
+  const supplementalSaved = savedMessages.filter(message => !liveBodies.has(`${message.direction}:${String(message.body).trim()}`));
+  const messages = [...liveMessages, ...supplementalSaved]
+    .filter((message, index, all) => all.findIndex(candidate => `${candidate.id}:${candidate.direction}:${candidate.sent_at}` === `${message.id}:${message.direction}:${message.sent_at}`) === index)
+    .sort((a, b) => new Date(String(b.sent_at)).getTime() - new Date(String(a.sent_at)).getTime());
   return Response.json({ messages });
 }
