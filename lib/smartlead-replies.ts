@@ -11,7 +11,7 @@ type InboxRow = {
   email_campaign_id?: number | string;
   email_campaign_name?: string;
   last_reply_time?: string;
-  lead?: { email?: string; first_name?: string; last_name?: string; company?: string };
+  lead?: { id?: number | string; email?: string; first_name?: string; last_name?: string; company?: string };
   campaign?: { id?: number | string; name?: string };
   category?: { id?: number; name?: string };
   last_message?: { id?: string | number; body?: string; received_at?: string };
@@ -142,12 +142,30 @@ export async function syncSmartleadOpportunityReplies(args: {
           RETURNING id
         `;
 
+        // Master Inbox frequently returns an empty or stale message_history.
+        // Resolve every positive lead through Smartlead's definitive endpoint
+        // so background sync permanently stores every SENT and REPLY event.
+        let completeHistory = row.message_history ?? [];
+        const smartleadLeadId = row.lead?.id ?? row.email_lead_id;
+        if (smartleadLeadId) {
+          const historyResponse = await fetch(
+            `https://server.smartlead.ai/api/v1/campaigns/${encodeURIComponent(externalCampaignId)}/leads/${encodeURIComponent(String(smartleadLeadId))}/message-history?api_key=${encodeURIComponent(apiKey)}`,
+            { cache: "no-store" },
+          );
+          if (historyResponse.ok) {
+            const historyPayload = await historyResponse.json() as unknown;
+            const historyObject = historyPayload && typeof historyPayload === "object" ? historyPayload as { history?: InboxRow["message_history"]; message_history?: InboxRow["message_history"]; data?: InboxRow["message_history"] } : {};
+            const definitive = Array.isArray(historyPayload) ? historyPayload as NonNullable<InboxRow["message_history"]> : historyObject.history ?? historyObject.message_history ?? historyObject.data ?? [];
+            if (definitive.length) completeHistory = definitive;
+          }
+        }
+
         const reply = [...(row.email_history ?? [])]
           .reverse()
           .find((message) => String(message.type ?? "").toUpperCase() === "REPLY");
-        const historyReply = [...(row.message_history ?? [])]
+        const historyReply = [...completeHistory]
           .reverse()
-          .find((message) => String(message.direction ?? "").toLowerCase() === "inbound");
+          .find((message) => ["inbound", "reply", "received"].includes(String(message.direction ?? message.type ?? "").toLowerCase()));
         const replyId = String(
           row.last_message?.id ??
             historyReply?.id ??
@@ -181,8 +199,8 @@ export async function syncSmartleadOpportunityReplies(args: {
           VALUES (${clientId},${prospect.id})
           ON CONFLICT DO NOTHING
         `;
-        const rawHistory = row.message_history?.length
-          ? row.message_history.map(message => ({
+        const rawHistory = completeHistory.length
+          ? completeHistory.map(message => ({
               id: message.id,
               type: message.direction ?? message.type,
               body: message.body ?? message.email_body,
