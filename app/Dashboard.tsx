@@ -256,8 +256,8 @@ const time = (date: string) => new Intl.DateTimeFormat("en", { hour: "numeric", 
 const preview = (body: string) => { const cleaned = body.replace(/\[[^\]]+\]/g, "").replace(/\s+/g, " ").trim(); const signature = cleaned.search(/\b(all the best|best regards|kind regards|please read our privacy|sales director|book a meeting with me)\b/i); const message = signature > 60 ? cleaned.slice(0, signature).trim() : cleaned; return message.length > 240 ? `${message.slice(0, 237).trim()}…` : message; };
 const paragraphs = (body: string) => body.replace(/\r/g, "").replace(/([.!?])\s+(?=[A-Z])/g, "$1\n\n").replace(/\s+(?=(If your request|For anything else|Otherwise,|All the best|Best regards|Kind regards|Please read our privacy|CPL One Cambridge|St Albans))/gi, "\n\n").split(/\n\s*\n/).map(part => part.replace(/\s+/g, " ").trim()).filter(Boolean);
 const cleanDisplayedEmail = (body: string, direction: 'inbound' | 'outbound') => {
-    let cleaned = body.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/@media\s+only\s+screen[\s\S]*?img\s*\{[^}]*\}/gi, '').replace(/pre\s*\{[^}]*\}\s*img\s*\{[^}]*\}/gi, '').trim();
-    if (direction === 'inbound') cleaned = cleaned.split(/[-–—\s]*Original Message[-–—\s]*/i)[0].trim();
+    let cleaned = body.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/@media\s+only\s+screen[\s\S]*?img\s*\{[^}]*\}/gi, '').replace(/pre\s*\{[^}]*\}\s*img\s*\{[^}]*\}/gi, '').replace(/&nbsp;|&#160;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'").replace(/<([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})>/g, '$1').trim();
+    if (direction === 'inbound') cleaned = cleaned.split(/(?:[-–—\s]*Original Message[-–—\s]*|\nOn\s.+?(?:wrote:|<[^>]+>|\b(?:AM|PM)\b)[\s\S]*)/i)[0].replace(/^\s*>+\s?/gm, '').trim();
     return cleaned;
 };
 const hydrateOpportunitiesFromInbox = (current: Data, inbox: AnalyticsData["inbox"]): Data => {
