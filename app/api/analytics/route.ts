@@ -5,6 +5,17 @@ export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
 const pct = (current: number, prior: number) => prior === 0 ? (current > 0 ? 100 : 0) : Math.round((current - prior) / prior * 1000) / 10;
+const phoneFromConversation = (messages: unknown) => {
+  const rows = Array.isArray(messages) ? messages : [];
+  const text = rows.map(row => String((row as { body?: unknown })?.body ?? "")).join("\n");
+  const candidates = text.match(/(?:\+\s?\d[\d\s().-]{7,}\d|\b(?:00)?\d[\d\s().-]{8,}\d\b)/g) ?? [];
+  for (const candidate of candidates.reverse()) {
+    let digits = candidate.replace(/\D/g, "");
+    if (digits.startsWith("00")) digits = digits.slice(2);
+    if (digits.length >= 8 && digits.length <= 15) return digits;
+  }
+  return null;
+};
 
 export async function GET(request: Request) {
   await ensureDatabase();
@@ -167,13 +178,14 @@ export async function GET(request: Request) {
       console.error("[Analytics self-heal] failed", { clientId, range, error }),
     );
   }
-  const inbox = await sql`
+  const rawInbox = await sql`
     SELECT * FROM (
       SELECT DISTINCT ON (r.prospect_id) r.id,r.prospect_id,r.body,r.sentiment,r.reply_category,r.received_at,
         p.first_name,p.last_name,p.email,p.title,p.status,p.pipeline_tag,p.owner_id,
         p.next_action,p.deadline_at,p.close_url,p.deal_value_cents,p.meeting_booked_at,p.showed_at,p.expected_close_date,p.closed_at,
         o.name owner_name,o.initials owner_initials,
         c.name company_name,c.domain company_domain,ca.name campaign_name,
+        (SELECT tc.linkedin_url FROM tam_contacts tc WHERE tc.client_id=${clientId} AND tc.normalized_email=p.normalized_email AND tc.linkedin_url IS NOT NULL LIMIT 1) linkedin_url,
         (SELECT COALESCE(json_agg(json_build_object('id',cm.id,'direction',cm.direction,'sender_name',cm.sender_name,'sender_email',cm.sender_email,'body',cm.body,'sent_at',cm.sent_at) ORDER BY cm.sent_at),'[]'::json) FROM conversation_messages cm WHERE cm.prospect_id=p.id) conversation
       FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
       JOIN replies r ON r.campaign_id=ca.id AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
@@ -183,6 +195,7 @@ export async function GET(request: Request) {
       ORDER BY r.prospect_id,r.received_at DESC
     ) visible_replies ORDER BY received_at DESC LIMIT 1000
   `;
+  const inbox = rawInbox.map(row => ({ ...row, phone_number: phoneFromConversation(row.conversation) }));
   const activity = await sql`
     SELECT metric_date::text date,COALESCE(SUM(emails_sent),0)::int emails_sent,COALESCE(SUM(replies),0)::int replies
     FROM campaign_daily_metrics
