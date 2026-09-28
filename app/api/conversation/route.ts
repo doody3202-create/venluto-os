@@ -1,0 +1,48 @@
+import { ensureDatabase, sql } from "@/lib/db";
+import { scopedClientId } from "@/lib/portal-auth";
+
+export const dynamic = "force-dynamic";
+
+const plain = (value: string) => value.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li)>/gi, "\n\n").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+
+export async function GET(request: Request) {
+  await ensureDatabase();
+  const url = new URL(request.url);
+  const clientId = scopedClientId(request, Number(url.searchParams.get("clientId")));
+  const prospectId = Number(url.searchParams.get("prospectId"));
+  if (!clientId || !prospectId) return Response.json({ error: "Workspace access denied" }, { status: 403 });
+  const [lead] = await sql`
+    SELECT p.id,p.email,p.first_name,p.last_name,ca.external_id campaign_external_id
+    FROM client_prospects cp
+    JOIN prospects p ON p.id=cp.prospect_id
+    JOIN replies r ON r.prospect_id=p.id
+    JOIN campaigns ca ON ca.id=r.campaign_id AND ca.provider='smartlead'
+    WHERE cp.client_id=${clientId} AND p.id=${prospectId}
+    ORDER BY r.received_at DESC LIMIT 1
+  `;
+  if (!lead) return Response.json({ error: "Lead not found" }, { status: 404 });
+  const apiKey = process.env.SMARTLEAD_API_KEY;
+  if (!apiKey) return Response.json({ error: "Smartlead is not configured" }, { status: 503 });
+  let found: Record<string, unknown> | undefined;
+  for (let offset = 0; offset < 5000 && !found; offset += 20) {
+    const response = await fetch(`https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=true`, {
+      method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
+      body: JSON.stringify({ offset, limit: 20, filters: { emailStatus: "Replied", campaignId: Number(lead.campaign_external_id) }, sortBy: "REPLY_TIME_DESC" }),
+    });
+    if (!response.ok) return Response.json({ error: `Smartlead conversation failed (${response.status})` }, { status: 502 });
+    const payload = await response.json() as { messages?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
+    const rows = payload.messages ?? payload.data ?? [];
+    found = rows.find(row => String((row.lead as { email?: string } | undefined)?.email ?? row.lead_email ?? "").toLowerCase() === String(lead.email).toLowerCase());
+    if (rows.length < 20) break;
+  }
+  const history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
+  const messages = history.map((message, index) => ({
+    id: String(message.id ?? `${prospectId}:${index}`),
+    direction: String(message.direction ?? "outbound").toLowerCase() === "inbound" ? "inbound" : "outbound",
+    sender_name: String(message.direction ?? "").toLowerCase() === "inbound" ? ([lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email) : "Venluto team",
+    sender_email: String(message.direction ?? "").toLowerCase() === "inbound" ? lead.email : null,
+    body: plain(String(message.body ?? message.email_body ?? "")),
+    sent_at: String(message.received_at ?? message.sent_at ?? message.time ?? new Date().toISOString()),
+  })).filter(message => message.body);
+  return Response.json({ messages });
+}
