@@ -483,7 +483,14 @@ function ConversationTimeline({ reply }: { reply: AnalyticsData["inbox"][number]
 }
 function EmailMessageContent({ body }: { body: string }) {
     const header = body.match(/(?:^|\n)((?:From|Sent|To|Subject):[^\n]*(?:\n(?:From|Sent|To|Subject):[^\n]*){1,3})(?:\n|$)/i);
-    const renderText = (text: string, key: string) => paragraphs(text).map((part, index) => <p key={`${key}-${index}`}>{part.includes('https://brownstone-growth-plan.vercel.app/') ? <><span>{part.split('https://')[0]}</span><a href="https://brownstone-growth-plan.vercel.app/" target="_blank" rel="noreferrer">your plan ↗</a></> : part}</p>);
+    const renderLinkedText = (text: string) => {
+        return <>{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\)|https?:\/\/[^\s<>()\]]+)/g).map((part, index) => {
+            const named = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+            if (named) return <a key={index} href={named[2]} target="_blank" rel="noreferrer">{named[1]} ↗</a>;
+            return /^https?:\/\//i.test(part) ? <a key={index} href={part} target="_blank" rel="noreferrer">{part} ↗</a> : part;
+        })}</>;
+    };
+    const renderText = (text: string, key: string) => paragraphs(text).map((part, index) => <p key={`${key}-${index}`}>{renderLinkedText(part)}</p>);
     if (!header || header.index === undefined) return <div>{renderText(body, 'body')}</div>;
     const before = body.slice(0, header.index).trim(), after = body.slice(header.index + header[0].length).trim();
     return <div>{before && renderText(before, 'before')}<div className="emailMetaBlock">{header[1].split('\n').map((line, index) => { const separator = line.indexOf(':'); return <div key={index}><strong>{line.slice(0, separator + 1)}</strong><span>{line.slice(separator + 1).trim()}</span></div>; })}</div>{after && <div className="emailMessageBody">{renderText(after, 'after')}</div>}</div>;

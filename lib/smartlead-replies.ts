@@ -45,6 +45,7 @@ const plain = (value: string) =>
   value
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_match, href: string, label: string) => `[${label.replace(/<[^>]*>/g, " ").trim() || href}](${href})`)
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li)>/gi, "\n\n")
     .replace(/<[^>]*>/g, " ")
