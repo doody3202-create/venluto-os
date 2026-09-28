@@ -300,6 +300,18 @@ export default function Dashboard() {
     const refreshLeadConversation = useCallback(async (id: number) => { const response = await fetch(`/api/conversation?clientId=${clientId}&prospectId=${id}&fresh=${Date.now()}`, { cache: 'no-store' }); if (!response.ok) return; const result = await response.json() as { messages?: AnalyticsData['inbox'][number]['conversation'] }; if (result.messages?.length) setAnalytics(current => current ? { ...current, inbox: current.inbox.map(row => row.prospect_id === id ? { ...row, conversation: result.messages! } : row) } : current); }, [clientId]);
     async function openLead(id: number) { setSelected(id); await refreshLeadConversation(id); }
     useEffect(() => { if (!selected) return; const timer = window.setInterval(() => { void refreshLeadConversation(selected); }, 30_000); return () => window.clearInterval(timer); }, [selected, refreshLeadConversation]);
+    useEffect(() => {
+        if (tab !== 'inbox' || !analytics?.inbox.length) return;
+        let cancelled = false;
+        const refreshInbox = async () => {
+            const ids = [...new Set(analytics.inbox.map(reply => reply.prospect_id))];
+            for (let index = 0; index < ids.length && !cancelled; index += 4)
+                await Promise.all(ids.slice(index, index + 4).map(refreshLeadConversation));
+        };
+        void refreshInbox();
+        const timer = window.setInterval(() => { void refreshInbox(); }, 120_000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [tab, clientId, analytics?.inbox.length, refreshLeadConversation]);
     async function assign(id: number) { await fetch("/api/dashboard", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, prospectId: id, ownerId: 1, status: "action_due" }) }); setToast("Assigned to Vlad"); await load(); }
     async function act(id: number, action: "handled" | "snooze" | "not_relevant") { const r = await fetch("/api/dashboard", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId, prospectId: id, action }) }); if (!r.ok) {
         setToast("Could not update this task");
