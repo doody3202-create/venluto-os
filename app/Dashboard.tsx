@@ -347,6 +347,7 @@ export default function Dashboard() {
     } }); }, [clientId, load, range]);
     useEffect(() => { if (!clientId)
         return; const timer = window.setInterval(() => { void loadAnalytics(clientId, range); }, 60_000); return () => window.clearInterval(timer); }, [clientId, range]);
+    useEffect(() => { if (!clientId || tab !== 'inbox') return; let active = true; const refreshThreads = async () => { const response = await fetch(`/api/integrations/smartlead/opportunities?clientId=${clientId}&fresh=${Date.now()}`, { method: 'POST', cache: 'no-store' }); if (active && response.ok) await loadAnalytics(clientId, range); }; void refreshThreads(); const timer = window.setInterval(() => { void refreshThreads(); }, 120_000); return () => { active = false; window.clearInterval(timer); }; }, [clientId, tab, range]);
     async function openLists() { setTab('lists'); if (!tam || tam.client.id !== clientId)
         await loadTam(); }
     async function changeClient(id: number) { setClientId(id); localStorage.setItem('venlutoClientId', String(id)); setTam(null); setAnalytics(null); if (tab === 'lists')

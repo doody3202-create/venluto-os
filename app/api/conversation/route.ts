@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   for (let offset = 0; offset < 5000 && !found; offset += 20) {
     const response = await fetch(`https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=true`, {
       method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
-      body: JSON.stringify({ offset, limit: 20, filters: { emailStatus: "Replied", campaignId: Number(lead.campaign_external_id) }, sortBy: "REPLY_TIME_DESC" }),
+      body: JSON.stringify({ offset, limit: 20, filters: { emailStatus: "Replied", campaignId: Number(lead.campaign_external_id), ...(String(lead.email).length <= 30 ? { search: String(lead.email) } : {}) }, sortBy: "SENT_TIME_DESC" }),
     });
     if (!response.ok) return Response.json({ error: `Smartlead conversation failed (${response.status})` }, { status: 502 });
     const payload = await response.json() as { messages?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
