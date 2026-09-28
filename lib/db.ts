@@ -85,6 +85,15 @@ const schema = [
  JOIN clients cl ON cl.id=cc.client_id
  WHERE p.normalized_email='info@bpancakefactory.com' AND LOWER(cl.name) LIKE 'celadonsoft%' ORDER BY r.received_at DESC LIMIT 1
  ON CONFLICT(external_id) DO UPDATE SET body=EXCLUDED.body,sent_at=EXCLUDED.sent_at`,
+`INSERT INTO conversation_messages(prospect_id,campaign_id,external_id,direction,sender_name,sender_email,body,sent_at)
+ SELECT p.id,r.campaign_id,'manual:celadonsoft:tacovilla:calendar-reply','outbound','Venluto team',NULL,
+ 'Hey, let''s have a chat this week.\n\nHere''s my calendar :\n\nTime slots for chat: https://celadon.neetocal.com/meeting-with-igor-lysoivanov?time_zone=Europe/Kyiv&month=2026-09&date=2026-09-28',
+ GREATEST(r.received_at + INTERVAL '1 minute','2026-09-28T10:20:00Z'::timestamptz)
+ FROM prospects p JOIN replies r ON r.prospect_id=p.id
+ JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id
+ JOIN clients cl ON cl.id=cc.client_id
+ WHERE p.normalized_email='info@tacovilla.us' AND LOWER(cl.name) LIKE 'celadonsoft%' ORDER BY r.received_at DESC LIMIT 1
+ ON CONFLICT(external_id) DO UPDATE SET body=EXCLUDED.body,sent_at=EXCLUDED.sent_at`,
 `UPDATE tam_contacts tc SET eligibility_status='held',eligibility_reason='Company ICP status is hold',updated_at=NOW() FROM client_companies cc WHERE cc.client_id=tc.client_id AND cc.company_id=tc.company_id AND cc.icp_status IN ('hold','held') AND tc.eligibility_status='eligible'`,
 `CREATE OR REPLACE FUNCTION sync_tam_contact_eligibility_from_company() RETURNS TRIGGER AS $$ BEGIN IF NEW.icp_status IN ('hold','held','excluded','rejected','not_fit') THEN UPDATE tam_contacts SET eligibility_status='held',eligibility_reason='Company ICP status is '||NEW.icp_status,updated_at=NOW() WHERE client_id=NEW.client_id AND company_id=NEW.company_id AND (eligibility_status='eligible' OR eligibility_reason LIKE 'Company ICP status is %'); ELSIF TG_OP='UPDATE' AND OLD.icp_status IN ('hold','held','excluded','rejected','not_fit') THEN UPDATE tam_contacts SET eligibility_status='eligible',eligibility_reason=NULL,updated_at=NOW() WHERE client_id=NEW.client_id AND company_id=NEW.company_id AND eligibility_status='held' AND eligibility_reason LIKE 'Company ICP status is %'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_sync_tam_contact_eligibility ON client_companies`,

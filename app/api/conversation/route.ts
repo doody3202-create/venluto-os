@@ -36,13 +36,15 @@ export async function GET(request: Request) {
     if (rows.length < 20) break;
   }
   const history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
-  const messages = history.map((message, index) => ({
+  const liveMessages = history.map((message, index) => ({
     id: String(message.id ?? `${prospectId}:${index}`),
     direction: String(message.direction ?? "outbound").toLowerCase() === "inbound" ? "inbound" : "outbound",
     sender_name: String(message.direction ?? "").toLowerCase() === "inbound" ? ([lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email) : "Venluto team",
     sender_email: String(message.direction ?? "").toLowerCase() === "inbound" ? lead.email : null,
     body: plain(String(message.body ?? message.email_body ?? "")),
     sent_at: String(message.received_at ?? message.sent_at ?? message.time ?? new Date().toISOString()),
-  })).filter(message => message.body).sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
+  })).filter(message => message.body);
+  const savedMessages = await sql`SELECT id::text id,direction,sender_name,sender_email,body,sent_at::text sent_at FROM conversation_messages WHERE prospect_id=${prospectId} ORDER BY sent_at DESC`;
+  const messages = [...liveMessages, ...savedMessages].filter((message, index, all) => all.findIndex(candidate => String(candidate.body).trim() === String(message.body).trim()) === index).sort((a, b) => new Date(String(b.sent_at)).getTime() - new Date(String(a.sent_at)).getTime());
   return Response.json({ messages });
 }
