@@ -62,28 +62,32 @@ export async function GET(request: Request) {
   if (!lead) return Response.json({ error: "Lead not found" }, { status: 404 });
   const apiKey = process.env.SMARTLEAD_API_KEY;
   if (!apiKey) return Response.json({ error: "Smartlead is not configured" }, { status: 503 });
-  let found: Record<string, unknown> | undefined;
-  for (let offset = 0; offset < 5000 && !found; offset += 20) {
-    const response = await fetch(`https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=true`, {
-      method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
-      body: JSON.stringify({ offset, limit: 20, filters: { emailStatus: "Replied", campaignId: Number(lead.campaign_external_id), ...(String(lead.email).length <= 30 ? { search: String(lead.email) } : {}) }, sortBy: "SENT_TIME_DESC" }),
-    });
-    if (!response.ok) return Response.json({ error: `Smartlead conversation failed (${response.status})` }, { status: 502 });
-    const payload = await response.json() as { messages?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
-    const rows = payload.messages ?? payload.data ?? [];
-    found = rows.find(row => String((row.lead as { email?: string } | undefined)?.email ?? row.lead_email ?? "").toLowerCase() === String(lead.email).toLowerCase());
-    if (rows.length < 20) break;
-  }
-  let history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
-  const smartleadLeadId = await resolveSmartleadLeadId(apiKey, String(lead.campaign_external_id), String(lead.email), found);
-  // Master Inbox can lag after an agent sends a reply. Smartlead's per-lead
-  // history is the definitive thread and includes both SENT and REPLY events.
+  let history: Array<Record<string, unknown>> = [];
+  const smartleadLeadId = await resolveSmartleadLeadId(apiKey, String(lead.campaign_external_id), String(lead.email));
+  // Go straight to Smartlead's definitive per-lead history. Master Inbox can
+  // lag after an agent sends a reply and must never be the primary source.
   if (smartleadLeadId) {
     const historyResponse = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${encodeURIComponent(String(lead.campaign_external_id))}/leads/${encodeURIComponent(String(smartleadLeadId))}/message-history?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
     if (historyResponse.ok) {
       const historyPayload = await historyResponse.json() as Array<Record<string, unknown>> | { history?: Array<Record<string, unknown>>; message_history?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
       const definitive = Array.isArray(historyPayload) ? historyPayload : historyPayload.history ?? historyPayload.message_history ?? historyPayload.data ?? [];
       if (definitive.length) history = definitive;
+    }
+  }
+  // Compatibility fallback for the rare account where lead lookup/history is
+  // unavailable. This is deliberately secondary because inbox history can lag.
+  if (!history.length) {
+    for (let offset = 0; offset < 5000 && !history.length; offset += 20) {
+      const response = await fetch(`https://server.smartlead.ai/api/v1/master-inbox/inbox-replies?api_key=${encodeURIComponent(apiKey)}&fetch_message_history=true`, {
+        method: "POST", headers: { "content-type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ offset, limit: 20, filters: { emailStatus: "Replied", campaignId: Number(lead.campaign_external_id), ...(String(lead.email).length <= 30 ? { search: String(lead.email) } : {}) }, sortBy: "SENT_TIME_DESC" }),
+      });
+      if (!response.ok) break;
+      const payload = await response.json() as { messages?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
+      const rows = payload.messages ?? payload.data ?? [];
+      const found = rows.find(row => String((row.lead as { email?: string } | undefined)?.email ?? row.lead_email ?? "").toLowerCase() === String(lead.email).toLowerCase());
+      history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
+      if (rows.length < 20) break;
     }
   }
   const liveMessages = history.map((message, index) => {
