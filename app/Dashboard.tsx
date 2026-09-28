@@ -464,7 +464,14 @@ function ConversationTimeline({ reply }: { reply: AnalyticsData["inbox"][number]
         return null;
     const stored = reply.conversation ?? [], hasInbound = stored.some(message => message.direction === 'inbound');
     const messages = [...(hasInbound ? [] : [{ id: `reply-${reply.id}`, direction: 'inbound' as const, sender_name: `${reply.first_name} ${reply.last_name}`.trim() || reply.company_name || reply.email, sender_email: reply.email, body: reply.body, sent_at: reply.received_at }]), ...stored].sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
-    return <div className="conversationTimeline">{messages.map(message => <article className={message.direction} key={message.id}><header><b>{message.direction === 'outbound' ? 'Sent by ' : 'Received from '}{message.sender_name}</b><time>{new Date(message.sent_at).toLocaleString()}</time></header>{message.sender_email && <small>{message.sender_email}</small>}<div>{paragraphs(cleanDisplayedEmail(message.body, message.direction)).map((part, index) => <p key={index}>{part.includes('https://brownstone-growth-plan.vercel.app/') ? <><span>{part.split('https://')[0]}</span><a href="https://brownstone-growth-plan.vercel.app/" target="_blank" rel="noreferrer">your plan ↗</a></> : part}</p>)}</div></article>)}</div>;
+    return <div className="conversationTimeline">{messages.map(message => <article className={message.direction} key={message.id}><header><b>{message.direction === 'outbound' ? 'Sent by ' : 'Received from '}{message.sender_name}</b><time>{new Date(message.sent_at).toLocaleString()}</time></header>{message.sender_email && <small>{message.sender_email}</small>}<EmailMessageContent body={cleanDisplayedEmail(message.body, message.direction)}/></article>)}</div>;
+}
+function EmailMessageContent({ body }: { body: string }) {
+    const header = body.match(/(?:^|\n)((?:From|Sent|To|Subject):[^\n]*(?:\n(?:From|Sent|To|Subject):[^\n]*){1,3})(?:\n|$)/i);
+    const renderText = (text: string, key: string) => paragraphs(text).map((part, index) => <p key={`${key}-${index}`}>{part.includes('https://brownstone-growth-plan.vercel.app/') ? <><span>{part.split('https://')[0]}</span><a href="https://brownstone-growth-plan.vercel.app/" target="_blank" rel="noreferrer">your plan ↗</a></> : part}</p>);
+    if (!header || header.index === undefined) return <div>{renderText(body, 'body')}</div>;
+    const before = body.slice(0, header.index).trim(), after = body.slice(header.index + header[0].length).trim();
+    return <div>{before && renderText(before, 'before')}<div className="emailMetaBlock">{header[1].split('\n').map((line, index) => { const separator = line.indexOf(':'); return <div key={index}><strong>{line.slice(0, separator + 1)}</strong><span>{line.slice(separator + 1).trim()}</span></div>; })}</div>{after && <div className="emailMessageBody">{renderText(after, 'after')}</div>}</div>;
 }
 function Inbox({ analytics, open }: {
     analytics: AnalyticsData | null;
