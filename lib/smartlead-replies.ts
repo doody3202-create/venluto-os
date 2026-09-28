@@ -18,9 +18,13 @@ type InboxRow = {
   message_history?: Array<{
     id?: string | number;
     direction?: string;
+    type?: string;
     body?: string;
+    email_body?: string;
     received_at?: string;
     sent_at?: string;
+    time?: string;
+    sent_from?: string;
   }>;
   email_history?: Array<{
     stats_id?: number | string;
@@ -169,6 +173,36 @@ export async function syncSmartleadOpportunityReplies(args: {
           VALUES (${clientId},${prospect.id})
           ON CONFLICT DO NOTHING
         `;
+        const rawHistory = row.message_history?.length
+          ? row.message_history.map(message => ({
+              id: message.id,
+              type: message.direction ?? message.type,
+              body: message.body ?? message.email_body,
+              time: message.received_at ?? message.sent_at ?? message.time,
+              sentFrom: message.sent_from,
+            }))
+          : (row.email_history ?? []).map(message => ({
+              id: message.message_id ?? message.stats_id,
+              type: message.type,
+              body: message.email_body,
+              time: message.time,
+              sentFrom: undefined,
+            }));
+        for (let messageIndex = 0; messageIndex < rawHistory.length; messageIndex++) {
+          const message = rawHistory[messageIndex];
+          const messageBody = plain(String(message.body ?? ""));
+          if (!messageBody) continue;
+          const messageType = String(message.type ?? "").toLowerCase();
+          const inbound = messageType === "reply" || messageType === "inbound" || messageType === "received";
+          const sentAt = message.time ?? receivedAt;
+          const externalMessageId = String(message.id ?? `${row.email_lead_map_id ?? email}:${messageIndex}:${sentAt}`);
+          const leadName = [row.lead?.first_name ?? row.lead_first_name, row.lead?.last_name ?? row.lead_last_name].filter(Boolean).join(" ").trim();
+          await sql`
+            INSERT INTO conversation_messages(prospect_id,campaign_id,external_id,direction,sender_name,sender_email,body,sent_at)
+            VALUES (${prospect.id},${campaign.id},${`smartlead:${externalCampaignId}:${externalMessageId}`},${inbound ? "inbound" : "outbound"},${inbound ? (leadName || row.lead?.company || email) : "Venluto team"},${inbound ? (message.sentFrom ?? email) : (message.sentFrom ?? null)},${messageBody},${sentAt})
+            ON CONFLICT(external_id) DO UPDATE SET body=EXCLUDED.body,sent_at=EXCLUDED.sent_at,sender_name=EXCLUDED.sender_name,sender_email=EXCLUDED.sender_email
+          `;
+        }
         return 1;
       }));
       synced += imported.reduce<number>((sum, value) => sum + value, 0);

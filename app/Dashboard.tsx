@@ -456,7 +456,8 @@ function Campaigns({ analytics }: {
 function ConversationTimeline({ reply }: { reply: AnalyticsData["inbox"][number] | null }) {
     if (!reply)
         return null;
-    const messages = [{ id: `reply-${reply.id}`, direction: 'inbound' as const, sender_name: `${reply.first_name} ${reply.last_name}`.trim() || reply.company_name || reply.email, sender_email: reply.email, body: reply.body, sent_at: reply.received_at }, ...(reply.conversation ?? [])].sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
+    const stored = reply.conversation ?? [], hasInbound = stored.some(message => message.direction === 'inbound');
+    const messages = [...(hasInbound ? [] : [{ id: `reply-${reply.id}`, direction: 'inbound' as const, sender_name: `${reply.first_name} ${reply.last_name}`.trim() || reply.company_name || reply.email, sender_email: reply.email, body: reply.body, sent_at: reply.received_at }]), ...stored].sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
     return <div className="conversationTimeline">{messages.map(message => <article className={message.direction} key={message.id}><header><b>{message.direction === 'outbound' ? 'Sent by ' : 'Received from '}{message.sender_name}</b><time>{new Date(message.sent_at).toLocaleString()}</time></header>{message.sender_email && <small>{message.sender_email}</small>}<div>{paragraphs(message.body).map((part, index) => <p key={index}>{part.includes('https://brownstone-growth-plan.vercel.app/') ? <><span>{part.split('https://')[0]}</span><a href="https://brownstone-growth-plan.vercel.app/" target="_blank" rel="noreferrer">your plan ↗</a></> : part}</p>)}</div></article>)}</div>;
 }
 function Inbox({ analytics, open }: {

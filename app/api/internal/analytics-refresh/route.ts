@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { syncVenlutoSmartleadCampaigns } from "@/lib/smartlead-sync";
+import { syncClientSmartleadOpportunities, syncVenlutoSmartleadCampaigns } from "@/lib/smartlead-sync";
 
 export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
@@ -21,7 +21,21 @@ export async function POST(request: Request) {
     return Response.json({ error: "clientId and a valid range are required" }, { status: 400 });
   }
   try {
-    return Response.json(await syncVenlutoSmartleadCampaigns(true, range, Number(body.clientId)));
+    const analytics = await syncVenlutoSmartleadCampaigns(true, range, Number(body.clientId)) as Record<string, unknown>;
+    let conversationMessagesSynced: number | undefined;
+    let conversationSyncWarning: string | undefined;
+    // The worker visits every range for every active workspace. Reconcile the
+    // complete Smartlead inbox once per cycle so full threads stay current even
+    // when a client has not opened the dashboard recently.
+    if (range === "30d") {
+      try {
+        conversationMessagesSynced = await syncClientSmartleadOpportunities(Number(body.clientId));
+      } catch (error) {
+        conversationSyncWarning = error instanceof Error ? error.message : "Conversation sync failed";
+        console.error("[Background conversations] refresh failed", { clientId: body.clientId, error });
+      }
+    }
+    return Response.json({ ...analytics, conversationMessagesSynced, conversationSyncWarning });
   } catch (error) {
     console.error("[Background analytics] refresh failed", { clientId: body.clientId, range, error });
     return Response.json({ error: error instanceof Error ? error.message : "Analytics refresh failed" }, { status: 500 });
