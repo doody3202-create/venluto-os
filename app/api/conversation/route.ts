@@ -35,15 +35,31 @@ export async function GET(request: Request) {
     found = rows.find(row => String((row.lead as { email?: string } | undefined)?.email ?? row.lead_email ?? "").toLowerCase() === String(lead.email).toLowerCase());
     if (rows.length < 20) break;
   }
-  const history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
-  const liveMessages = history.map((message, index) => ({
-    id: String(message.id ?? `${prospectId}:${index}`),
-    direction: String(message.direction ?? "outbound").toLowerCase() === "inbound" ? "inbound" : "outbound",
-    sender_name: String(message.direction ?? "").toLowerCase() === "inbound" ? ([lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email) : "Venluto team",
-    sender_email: String(message.direction ?? "").toLowerCase() === "inbound" ? lead.email : null,
+  let history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
+  const foundLead = found?.lead as { id?: string | number } | undefined;
+  const smartleadLeadId = foundLead?.id ?? found?.email_lead_id;
+  // Master Inbox can lag after an agent sends a reply. Smartlead's per-lead
+  // history is the definitive thread and includes both SENT and REPLY events.
+  if (smartleadLeadId) {
+    const historyResponse = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${encodeURIComponent(String(lead.campaign_external_id))}/leads/${encodeURIComponent(String(smartleadLeadId))}/message-history?api_key=${encodeURIComponent(apiKey)}`, { cache: "no-store" });
+    if (historyResponse.ok) {
+      const historyPayload = await historyResponse.json() as Array<Record<string, unknown>> | { history?: Array<Record<string, unknown>>; message_history?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
+      const definitive = Array.isArray(historyPayload) ? historyPayload : historyPayload.history ?? historyPayload.message_history ?? historyPayload.data ?? [];
+      if (definitive.length) history = definitive;
+    }
+  }
+  const liveMessages = history.map((message, index) => {
+    const messageType = String(message.direction ?? message.type ?? "outbound").toLowerCase();
+    const inbound = messageType === "inbound" || messageType === "reply" || messageType === "received";
+    return {
+    id: String(message.id ?? message.message_id ?? message.stats_id ?? `${prospectId}:${index}`),
+    direction: inbound ? "inbound" : "outbound",
+    sender_name: inbound ? ([lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email) : "Venluto team",
+    sender_email: inbound ? lead.email : null,
     body: plain(String(message.body ?? message.email_body ?? "")),
     sent_at: String(message.received_at ?? message.sent_at ?? message.time ?? new Date().toISOString()),
-  })).filter(message => message.body);
+  };
+  }).filter(message => message.body);
   const savedMessages = await sql`SELECT id::text id,direction,sender_name,sender_email,body,sent_at::text sent_at FROM conversation_messages WHERE prospect_id=${prospectId} ORDER BY sent_at DESC`;
   const messages = [...liveMessages, ...savedMessages].filter((message, index, all) => all.findIndex(candidate => String(candidate.body).trim() === String(message.body).trim()) === index).sort((a, b) => new Date(String(b.sent_at)).getTime() - new Date(String(a.sent_at)).getTime());
   return Response.json({ messages });
