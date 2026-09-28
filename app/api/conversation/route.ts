@@ -5,6 +5,45 @@ export const dynamic = "force-dynamic";
 
 const plain = (value: string) => value.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li)>/gi, "\n\n").replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'").replace(/<([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})>/g, "$1").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 
+const records = (payload: unknown): Array<Record<string, unknown>> => {
+  if (Array.isArray(payload)) return payload as Array<Record<string, unknown>>;
+  if (!payload || typeof payload !== "object") return [];
+  const object = payload as Record<string, unknown>;
+  for (const key of ["data", "leads", "results"]) {
+    if (Array.isArray(object[key])) return object[key] as Array<Record<string, unknown>>;
+  }
+  return [object];
+};
+
+const exactEmail = (row: Record<string, unknown>, email: string) =>
+  String(row.email ?? (row.lead as Record<string, unknown> | undefined)?.email ?? "").toLowerCase() === email.toLowerCase();
+
+async function resolveSmartleadLeadId(apiKey: string, campaignId: string, email: string, inboxRow?: Record<string, unknown>) {
+  const nestedLead = inboxRow?.lead as Record<string, unknown> | undefined;
+  if (nestedLead?.id) return nestedLead.id;
+
+  // email_lead_id and campaign_lead_map_id are relationship IDs, not the lead
+  // ID required by Smartlead's definitive message-history endpoint.
+  const lookup = await fetch(`https://server.smartlead.ai/api/v1/leads/?api_key=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}`, { cache: "no-store" });
+  if (lookup.ok) {
+    const match = records(await lookup.json()).find(row => exactEmail(row, email));
+    if (match?.id ?? match?.lead_id) return match.id ?? match.lead_id;
+  }
+
+  // Some Smartlead accounts do not expose the global email lookup. Resolve the
+  // real lead ID from the campaign itself so every client and future campaign
+  // still receives the complete SENT + REPLY timeline.
+  for (let offset = 0; offset < 100000; offset += 100) {
+    const response = await fetch(`https://server.smartlead.ai/api/v1/campaigns/${encodeURIComponent(campaignId)}/leads?api_key=${encodeURIComponent(apiKey)}&offset=${offset}&limit=100`, { cache: "no-store" });
+    if (!response.ok) break;
+    const rows = records(await response.json());
+    const match = rows.find(row => exactEmail(row, email));
+    if (match?.id ?? match?.lead_id) return match.id ?? match.lead_id;
+    if (rows.length < 100) break;
+  }
+  return undefined;
+}
+
 export async function GET(request: Request) {
   await ensureDatabase();
   const url = new URL(request.url);
@@ -36,8 +75,7 @@ export async function GET(request: Request) {
     if (rows.length < 20) break;
   }
   let history = (found?.message_history as Array<Record<string, unknown>> | undefined) ?? [];
-  const foundLead = found?.lead as { id?: string | number } | undefined;
-  const smartleadLeadId = foundLead?.id ?? found?.email_lead_id;
+  const smartleadLeadId = await resolveSmartleadLeadId(apiKey, String(lead.campaign_external_id), String(lead.email), found);
   // Master Inbox can lag after an agent sends a reply. Smartlead's per-lead
   // history is the definitive thread and includes both SENT and REPLY events.
   if (smartleadLeadId) {
