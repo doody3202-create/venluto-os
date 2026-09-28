@@ -255,6 +255,11 @@ const rel = (date?: string) => { if (!date)
 const time = (date: string) => new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(date));
 const preview = (body: string) => { const cleaned = body.replace(/\[[^\]]+\]/g, "").replace(/\s+/g, " ").trim(); const signature = cleaned.search(/\b(all the best|best regards|kind regards|please read our privacy|sales director|book a meeting with me)\b/i); const message = signature > 60 ? cleaned.slice(0, signature).trim() : cleaned; return message.length > 240 ? `${message.slice(0, 237).trim()}…` : message; };
 const paragraphs = (body: string) => body.replace(/\r/g, "").replace(/([.!?])\s+(?=[A-Z])/g, "$1\n\n").replace(/\s+(?=(If your request|For anything else|Otherwise,|All the best|Best regards|Kind regards|Please read our privacy|CPL One Cambridge|St Albans))/gi, "\n\n").split(/\n\s*\n/).map(part => part.replace(/\s+/g, " ").trim()).filter(Boolean);
+const cleanDisplayedEmail = (body: string, direction: 'inbound' | 'outbound') => {
+    let cleaned = body.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/@media\s+only\s+screen[\s\S]*?img\s*\{[^}]*\}/gi, '').replace(/pre\s*\{[^}]*\}\s*img\s*\{[^}]*\}/gi, '').trim();
+    if (direction === 'inbound') cleaned = cleaned.split(/[-–—\s]*Original Message[-–—\s]*/i)[0].trim();
+    return cleaned;
+};
 const hydrateOpportunitiesFromInbox = (current: Data, inbox: AnalyticsData["inbox"]): Data => {
     const existing = new Map(current.prospects.map(prospect => [prospect.id, prospect])), prospects = new Map<number, Prospect>();
     for (const row of inbox) {
@@ -459,7 +464,7 @@ function ConversationTimeline({ reply }: { reply: AnalyticsData["inbox"][number]
         return null;
     const stored = reply.conversation ?? [], hasInbound = stored.some(message => message.direction === 'inbound');
     const messages = [...(hasInbound ? [] : [{ id: `reply-${reply.id}`, direction: 'inbound' as const, sender_name: `${reply.first_name} ${reply.last_name}`.trim() || reply.company_name || reply.email, sender_email: reply.email, body: reply.body, sent_at: reply.received_at }]), ...stored].sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime());
-    return <div className="conversationTimeline">{messages.map(message => <article className={message.direction} key={message.id}><header><b>{message.direction === 'outbound' ? 'Sent by ' : 'Received from '}{message.sender_name}</b><time>{new Date(message.sent_at).toLocaleString()}</time></header>{message.sender_email && <small>{message.sender_email}</small>}<div>{paragraphs(message.body).map((part, index) => <p key={index}>{part.includes('https://brownstone-growth-plan.vercel.app/') ? <><span>{part.split('https://')[0]}</span><a href="https://brownstone-growth-plan.vercel.app/" target="_blank" rel="noreferrer">your plan ↗</a></> : part}</p>)}</div></article>)}</div>;
+    return <div className="conversationTimeline">{messages.map(message => <article className={message.direction} key={message.id}><header><b>{message.direction === 'outbound' ? 'Sent by ' : 'Received from '}{message.sender_name}</b><time>{new Date(message.sent_at).toLocaleString()}</time></header>{message.sender_email && <small>{message.sender_email}</small>}<div>{paragraphs(cleanDisplayedEmail(message.body, message.direction)).map((part, index) => <p key={index}>{part.includes('https://brownstone-growth-plan.vercel.app/') ? <><span>{part.split('https://')[0]}</span><a href="https://brownstone-growth-plan.vercel.app/" target="_blank" rel="noreferrer">your plan ↗</a></> : part}</p>)}</div></article>)}</div>;
 }
 function Inbox({ analytics, open }: {
     analytics: AnalyticsData | null;
