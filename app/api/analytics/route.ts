@@ -173,7 +173,8 @@ export async function GET(request: Request) {
         p.first_name,p.last_name,p.email,p.title,p.status,p.pipeline_tag,p.owner_id,
         p.next_action,p.deadline_at,p.close_url,p.deal_value_cents,p.meeting_booked_at,p.showed_at,p.expected_close_date,p.closed_at,
         o.name owner_name,o.initials owner_initials,
-        c.name company_name,c.domain company_domain,ca.name campaign_name
+        c.name company_name,c.domain company_domain,ca.name campaign_name,
+        (SELECT COALESCE(json_agg(json_build_object('id',cm.id,'direction',cm.direction,'sender_name',cm.sender_name,'sender_email',cm.sender_email,'body',cm.body,'sent_at',cm.sent_at) ORDER BY cm.sent_at),'[]'::json) FROM conversation_messages cm WHERE cm.prospect_id=p.id) conversation
       FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
       JOIN replies r ON r.campaign_id=ca.id AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
       JOIN prospects p ON p.id=r.prospect_id LEFT JOIN companies c ON c.id=p.company_id LEFT JOIN owners o ON o.id=p.owner_id

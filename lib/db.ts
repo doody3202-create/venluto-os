@@ -22,6 +22,7 @@ const schema = [
 `CREATE TABLE IF NOT EXISTS integration_events (id BIGSERIAL PRIMARY KEY, provider TEXT NOT NULL, external_event_id TEXT NOT NULL, event_type TEXT NOT NULL, payload_json JSONB NOT NULL, processed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(provider,external_event_id))`,
 `CREATE TABLE IF NOT EXISTS replies (id BIGSERIAL PRIMARY KEY, prospect_id BIGINT NOT NULL REFERENCES prospects(id), campaign_id BIGINT REFERENCES campaigns(id), provider_reply_id TEXT NOT NULL UNIQUE, body TEXT NOT NULL, sentiment TEXT NOT NULL DEFAULT 'positive', received_at TIMESTAMPTZ NOT NULL)`,
 `ALTER TABLE replies ADD COLUMN IF NOT EXISTS reply_category TEXT`,
+`CREATE TABLE IF NOT EXISTS conversation_messages (id BIGSERIAL PRIMARY KEY, prospect_id BIGINT NOT NULL REFERENCES prospects(id), campaign_id BIGINT REFERENCES campaigns(id), external_id TEXT NOT NULL UNIQUE, direction TEXT NOT NULL CHECK(direction IN ('inbound','outbound')), sender_name TEXT NOT NULL, sender_email TEXT, body TEXT NOT NULL, sent_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 `CREATE TABLE IF NOT EXISTS meetings (id BIGSERIAL PRIMARY KEY, prospect_id BIGINT REFERENCES prospects(id), booking_uid TEXT NOT NULL UNIQUE, title TEXT NOT NULL, starts_at TIMESTAMPTZ NOT NULL, ends_at TIMESTAMPTZ, status TEXT NOT NULL, attendee_email TEXT NOT NULL, booking_url TEXT)`,
 `CREATE TABLE IF NOT EXISTS sync_jobs (id BIGSERIAL PRIMARY KEY, provider TEXT NOT NULL, operation TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, payload_json JSONB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, next_retry_at TIMESTAMPTZ, locked_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
 `CREATE TABLE IF NOT EXISTS prospect_transitions (id BIGSERIAL PRIMARY KEY, prospect_id BIGINT NOT NULL REFERENCES prospects(id), from_status TEXT, to_status TEXT NOT NULL, reason TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
@@ -74,6 +75,16 @@ const schema = [
 `CREATE INDEX IF NOT EXISTS idx_company_segments_segment ON company_segments(segment_id,client_company_id)`,
 `CREATE INDEX IF NOT EXISTS idx_company_signals_lookup ON company_signals(client_id,company_id,signal_type)`,
 `CREATE INDEX IF NOT EXISTS idx_campaign_daily_metrics_client_date ON campaign_daily_metrics(client_id,metric_date)`,
+`CREATE INDEX IF NOT EXISTS idx_conversation_messages_prospect_sent ON conversation_messages(prospect_id,sent_at)`,
+`INSERT INTO conversation_messages(prospect_id,campaign_id,external_id,direction,sender_name,sender_email,body,sent_at)
+ SELECT p.id,r.campaign_id,'manual:celadonsoft:bpf:growth-plan','outbound','Vlad · Venluto',NULL,
+ 'Hey Bobby, thanks for the interest\n\nHere''s your plan that we put together -> https://brownstone-growth-plan.vercel.app/\n\nAre you available this Friday/Monday between 9am-3pm your time for 15-minutes to walk you through where the extra $20k a month comes from, rebuilt on your real numbers ?',
+ GREATEST(r.received_at + INTERVAL '1 minute','2026-09-28T00:00:00Z'::timestamptz)
+ FROM prospects p JOIN replies r ON r.prospect_id=p.id
+ JOIN client_campaigns cc ON cc.campaign_id=r.campaign_id
+ JOIN clients cl ON cl.id=cc.client_id
+ WHERE p.normalized_email='info@bpancakefactory.com' AND LOWER(cl.name) LIKE 'celadonsoft%' ORDER BY r.received_at DESC LIMIT 1
+ ON CONFLICT(external_id) DO UPDATE SET body=EXCLUDED.body,sent_at=EXCLUDED.sent_at`,
 `UPDATE tam_contacts tc SET eligibility_status='held',eligibility_reason='Company ICP status is hold',updated_at=NOW() FROM client_companies cc WHERE cc.client_id=tc.client_id AND cc.company_id=tc.company_id AND cc.icp_status IN ('hold','held') AND tc.eligibility_status='eligible'`,
 `CREATE OR REPLACE FUNCTION sync_tam_contact_eligibility_from_company() RETURNS TRIGGER AS $$ BEGIN IF NEW.icp_status IN ('hold','held','excluded','rejected','not_fit') THEN UPDATE tam_contacts SET eligibility_status='held',eligibility_reason='Company ICP status is '||NEW.icp_status,updated_at=NOW() WHERE client_id=NEW.client_id AND company_id=NEW.company_id AND (eligibility_status='eligible' OR eligibility_reason LIKE 'Company ICP status is %'); ELSIF TG_OP='UPDATE' AND OLD.icp_status IN ('hold','held','excluded','rejected','not_fit') THEN UPDATE tam_contacts SET eligibility_status='eligible',eligibility_reason=NULL,updated_at=NOW() WHERE client_id=NEW.client_id AND company_id=NEW.company_id AND eligibility_status='held' AND eligibility_reason LIKE 'Company ICP status is %'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_sync_tam_contact_eligibility ON client_companies`,
