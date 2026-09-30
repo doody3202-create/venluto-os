@@ -3,6 +3,7 @@ import { ensureDatabase, normalizeEmail, sql } from "@/lib/db";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 type Json = Record<string, unknown>;
 const API = "https://api.instantly.ai/api/v2";
+const campaignKey = (value: unknown) => String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 const rangeDates = (range: RangeKey) => {
   const end = new Date(), start = new Date();
@@ -94,7 +95,11 @@ async function runInstantlySync(range: RangeKey = "30d", requestedClientId?: num
   let matched = 0, opportunities = 0;
   for (const client of clients) {
     const keyword = String(client.campaign_match_keyword ?? client.name).toLowerCase();
-    for (const campaign of allCampaigns.filter(row => String(row.name ?? "").toLowerCase().includes(keyword))) {
+    const normalizedKeyword = campaignKey(keyword);
+    for (const campaign of allCampaigns.filter(row => {
+      const name = String(row.name ?? "").toLowerCase();
+      return name.includes(keyword) || (normalizedKeyword.length >= 3 && campaignKey(name).includes(normalizedKeyword));
+    })) {
       const externalId = String(campaign.id), metric = analyticsById.get(externalId) ?? {};
       const metadata: Record<string, string | number | null> = {
         status: campaign.status == null ? null : String(campaign.status), [`people_contacted_${range}`]: Number(metric.contacted_count ?? 0),
