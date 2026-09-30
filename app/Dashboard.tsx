@@ -169,6 +169,7 @@ type CampaignMetric = {
     id: number;
     name: string;
     external_id: string;
+    provider: string;
     status: string | null;
     contacted: number;
     emails_sent: number;
@@ -502,7 +503,7 @@ function FunnelLeads({ analytics, range }: {
 }
 function Campaigns({ analytics }: {
     analytics: AnalyticsData | null;
-}) { const client = analytics?.client.name ?? 'client', period = analytics?.range === 'all' ? 'all-time' : analytics?.range; return <section className="performanceTable wideTable"><div><h2>Smartlead campaigns · {period}</h2><span>Campaign results use the same visible reporting period. Open Email campaigns for an all-time Smartlead comparison.</span></div><div className="tableWrap"><table><thead><tr><th>Campaign</th><th>Contacted</th><th>Emails sent</th><th>Replies</th><th>Reply rate</th><th>Opportunities</th><th>Contact:lead</th><th>Booked</th><th>Showed</th><th>Closed won</th><th>New MRR</th></tr></thead><tbody>{analytics?.campaigns.map(c => <tr key={c.id}><td><strong>{c.name}</strong><small>#{c.external_id} · {c.status ?? 'tracked'}</small></td><td>{n(c.contacted)}</td><td>{n(c.emails_sent)}</td><td>{n(c.replies)}</td><td>{c.contacted ? (c.replies / c.contacted * 100).toFixed(1) : '0.0'}%</td><td>{n(c.opportunities)}</td><td>{c.opportunities ? `1:${n(Math.round(c.contacted / c.opportunities))}` : '—'}</td><td>{n(c.booked)}</td><td>{n(c.completed)}</td><td>{n(c.closed_won)}</td><td>${n(Math.round(Number(c.revenue_cents) / 100))}</td></tr>)}</tbody></table></div>{!analytics?.campaigns.length && <p className="empty large">No {client} campaigns found yet. Smartlead discovery will retry automatically.</p>}</section>; }
+}) { const client = analytics?.client.name ?? 'client', period = analytics?.range === 'all' ? 'all-time' : analytics?.range; return <section className="performanceTable wideTable"><div><h2>Email campaigns · {period}</h2><span>Smartlead history stays preserved while new Instantly campaigns sync into the same reporting period.</span></div><div className="tableWrap"><table><thead><tr><th>Campaign</th><th>Contacted</th><th>Emails sent</th><th>Replies</th><th>Reply rate</th><th>Opportunities</th><th>Contact:lead</th><th>Booked</th><th>Showed</th><th>Closed won</th><th>New MRR</th></tr></thead><tbody>{analytics?.campaigns.map(c => <tr key={c.id}><td><strong>{c.name}</strong><small>{c.provider === 'instantly' ? 'Instantly' : 'Smartlead'} · {c.status ?? 'tracked'}</small></td><td>{n(c.contacted)}</td><td>{n(c.emails_sent)}</td><td>{n(c.replies)}</td><td>{c.contacted ? (c.replies / c.contacted * 100).toFixed(1) : '0.0'}%</td><td>{n(c.opportunities)}</td><td>{c.opportunities ? `1:${n(Math.round(c.contacted / c.opportunities))}` : '—'}</td><td>{n(c.booked)}</td><td>{n(c.completed)}</td><td>{n(c.closed_won)}</td><td>${n(Math.round(Number(c.revenue_cents) / 100))}</td></tr>)}</tbody></table></div>{!analytics?.campaigns.length && <p className="empty large">No {client} campaigns found yet. Provider discovery will retry automatically.</p>}</section>; }
 function ConversationTimeline({ reply }: { reply: AnalyticsData["inbox"][number] | null }) {
     if (!reply)
         return null;

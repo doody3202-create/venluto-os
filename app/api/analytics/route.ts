@@ -1,6 +1,7 @@
 import { ensureDatabase, sql } from "@/lib/db";
 import { scopedClientId } from "@/lib/portal-auth";
 import { syncVenlutoSmartleadCampaigns } from "@/lib/smartlead-sync";
+import { syncInstantly } from "@/lib/instantly-sync";
 export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
 const daysFor = (range: RangeKey) => range === "7d" ? 7 : range === "60d" ? 60 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
@@ -101,7 +102,7 @@ export async function GET(request: Request) {
 
   const peopleKey = `people_contacted_${range}`, emailsKey = `emails_sent_${range}`, uncontactedKey = `uncontacted_leads_${range}`, repliesKey = `replies_${range}`, positiveKey = `positive_replies_${range}`;
   const campaigns = await sql`
-    SELECT ca.id,ca.name,ca.external_id,ca.metadata_json->>'status' status,
+    SELECT ca.id,ca.name,ca.external_id,ca.provider,ca.metadata_json->>'status' status,
       COALESCE((ca.metadata_json->>${peopleKey})::int,COALESCE(SUM(dm.people_contacted),0)::int) contacted,
       COALESCE((ca.metadata_json->>${emailsKey})::int,COALESCE(SUM(dm.emails_sent),0)::int) emails_sent,
       COALESCE((ca.metadata_json->>${uncontactedKey})::int,COALESCE(SUM(dm.uncontacted_leads),0)::int) uncontacted,
@@ -137,6 +138,15 @@ export async function GET(request: Request) {
     positiveReplies: campaigns.reduce((sum, row) => sum + Number(row.positive_replies), 0),
     opportunities: campaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
   };
+  const instantlyCampaigns = campaigns.filter(row => row.provider === "instantly");
+  const instantlyOutbound = {
+    peopleContacted: instantlyCampaigns.reduce((sum, row) => sum + Number(row.contacted), 0),
+    emailsSent: instantlyCampaigns.reduce((sum, row) => sum + Number(row.emails_sent), 0),
+    uncontactedLeads: instantlyCampaigns.reduce((sum, row) => sum + Number(row.uncontacted), 0),
+    replies: instantlyCampaigns.reduce((sum, row) => sum + Number(row.replies), 0),
+    positiveReplies: instantlyCampaigns.reduce((sum, row) => sum + Number(row.positive_replies), 0),
+    opportunities: instantlyCampaigns.reduce((sum, row) => sum + Number(row.opportunities), 0),
+  };
   if (campaigns.length) totals = {
     ...totals,
     ...campaignOutbound,
@@ -155,12 +165,12 @@ export async function GET(request: Request) {
     if (analyticsComplete && (snapshotHasOutbound || !campaignsHaveOutbound)) {
       totals = {
         ...totals,
-        peopleContacted: Number(metrics.peopleContacted ?? 0),
-        emailsSent: Number(metrics.emailsSent ?? 0),
-        uncontactedLeads: Number(metrics.uncontactedLeads ?? 0),
-        replies: Number(metrics.replies ?? 0),
-        positiveReplies: Number(metrics.positiveReplies ?? 0),
-        opportunities: Number(metrics.opportunities ?? 0),
+        peopleContacted: Number(metrics.peopleContacted ?? 0) + instantlyOutbound.peopleContacted,
+        emailsSent: Number(metrics.emailsSent ?? 0) + instantlyOutbound.emailsSent,
+        uncontactedLeads: Number(metrics.uncontactedLeads ?? 0) + instantlyOutbound.uncontactedLeads,
+        replies: Number(metrics.replies ?? 0) + instantlyOutbound.replies,
+        positiveReplies: Number(metrics.positiveReplies ?? 0) + instantlyOutbound.positiveReplies,
+        opportunities: Number(metrics.opportunities ?? 0) + instantlyOutbound.opportunities,
       };
     }
   }
@@ -178,6 +188,7 @@ export async function GET(request: Request) {
       console.error("[Analytics self-heal] failed", { clientId, range, error }),
     );
   }
+  if (process.env.INSTANTLY_API_KEY) void syncInstantly(range, clientId).catch(error => console.error("[Instantly self-heal] failed", { clientId, range, error }));
   const rawInbox = await sql`
     SELECT * FROM (
       SELECT DISTINCT ON (r.prospect_id) r.id,r.prospect_id,r.body,r.sentiment,r.reply_category,r.received_at,
@@ -185,7 +196,7 @@ export async function GET(request: Request) {
         p.next_action,p.deadline_at,p.close_url,p.deal_value_cents,p.meeting_booked_at,p.showed_at,p.expected_close_date,p.closed_at,
         o.name owner_name,o.initials owner_initials,
         c.name company_name,c.domain company_domain,ca.name campaign_name,
-        (SELECT tc.linkedin_url FROM tam_contacts tc WHERE tc.client_id=${clientId} AND tc.normalized_email=p.normalized_email AND tc.linkedin_url IS NOT NULL LIMIT 1) linkedin_url,
+        COALESCE(p.linkedin_url,(SELECT tc.linkedin_url FROM tam_contacts tc WHERE tc.client_id=${clientId} AND tc.normalized_email=p.normalized_email AND tc.linkedin_url IS NOT NULL LIMIT 1)) linkedin_url,p.phone,
         (SELECT COALESCE(json_agg(json_build_object('id',cm.id,'direction',cm.direction,'sender_name',cm.sender_name,'sender_email',cm.sender_email,'body',cm.body,'sent_at',cm.sent_at) ORDER BY cm.sent_at),'[]'::json) FROM conversation_messages cm WHERE cm.prospect_id=p.id) conversation
       FROM client_campaigns cc JOIN campaigns ca ON ca.id=cc.campaign_id
       JOIN replies r ON r.campaign_id=ca.id AND LOWER(COALESCE(r.reply_category,'')) IN ('interested','information request','meeting request')
@@ -195,7 +206,7 @@ export async function GET(request: Request) {
       ORDER BY r.prospect_id,r.received_at DESC
     ) visible_replies ORDER BY received_at DESC LIMIT 1000
   `;
-  const inbox = rawInbox.map(row => ({ ...row, phone_number: phoneFromConversation(row.conversation) }));
+  const inbox = rawInbox.map(row => ({ ...row, phone_number: phoneFromConversation(row.conversation) ?? row.phone }));
   const activity = await sql`
     SELECT metric_date::text date,COALESCE(SUM(emails_sent),0)::int emails_sent,COALESCE(SUM(replies),0)::int replies
     FROM campaign_daily_metrics
