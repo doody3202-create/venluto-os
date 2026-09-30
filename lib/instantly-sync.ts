@@ -101,7 +101,10 @@ async function runInstantlySync(range: RangeKey = "30d", requestedClientId?: num
       const [saved] = await sql`INSERT INTO campaigns(provider,external_id,name,metadata_json) VALUES ('instantly',${externalId},${String(campaign.name)},${sql.json(metadata)}) ON CONFLICT(provider,external_id) DO UPDATE SET name=EXCLUDED.name,metadata_json=campaigns.metadata_json||EXCLUDED.metadata_json RETURNING id`;
       await sql`INSERT INTO client_campaigns(client_id,campaign_id,matched_by) VALUES (${client.id},${saved.id},${`name:${keyword}`}) ON CONFLICT DO NOTHING`;
       matched++;
-      if (Number(metric.total_opportunities ?? 0) > 0) for (const lead of await interestedLeads(externalId)) if (await saveLead(Number(client.id), Number(saved.id), externalId, lead)) opportunities++;
+      // Instantly's aggregate opportunity counter can lag behind lead interest
+      // status. Reconcile the lead filters directly once per worker cycle so a
+      // real positive reply is never hidden merely because analytics says 0.
+      if (range === "30d") for (const lead of await interestedLeads(externalId)) if (await saveLead(Number(client.id), Number(saved.id), externalId, lead)) opportunities++;
     }
   }
   return { ok: true, provider: "instantly", range, campaigns: matched, opportunities };

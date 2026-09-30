@@ -6,7 +6,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 const appUrl=process.env.APP_URL||"https://venluto-os-production.up.railway.app";
 const analyticsIntervalMs=Math.max(5,Number(process.env.ANALYTICS_REFRESH_MINUTES||15))*60_000;
-const analyticsRanges=['7d','30d','60d','90d','all'];
+const analyticsRanges=['30d','7d','60d','90d','all'];
 let nextAnalyticsRefreshAt=0,analyticsRefresh=null;
 
 async function refreshAnalyticsSnapshots(){
