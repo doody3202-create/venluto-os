@@ -15,10 +15,13 @@ async function refreshAnalyticsSnapshots(){
  const signature=createHash('sha256').update(`venluto-analytics:${process.env.DATABASE_URL}`).digest('hex');
  console.log('Background analytics refresh started',{clients:clients.length,ranges:analyticsRanges.length});
  for(const client of clients)for(const range of analyticsRanges){
+  const instantlyResponse=await fetch(`${appUrl}/api/internal/instantly-refresh`,{method:'POST',headers:{'content-type':'application/json','x-venluto-worker-signature':signature},body:JSON.stringify({clientId:Number(client.id),range})});
+  if(!instantlyResponse.ok){const detail=(await instantlyResponse.text()).slice(0,300);console.error('Background Instantly range failed',{client:client.name,range,status:instantlyResponse.status,detail})}
+  else{const result=await instantlyResponse.json();console.log('Background Instantly range refreshed',{client:client.name,range,campaigns:result.campaigns??0,opportunities:result.opportunities??0})}
   const response=await fetch(`${appUrl}/api/internal/analytics-refresh`,{method:'POST',headers:{'content-type':'application/json','x-venluto-worker-signature':signature},body:JSON.stringify({clientId:Number(client.id),range})});
   if(!response.ok){const detail=(await response.text()).slice(0,300);console.error('Background analytics range failed',{client:client.name,range,status:response.status,detail});continue}
-  const result=await response.json();
-  console.log('Background analytics range refreshed',{client:client.name,range,instantlyCampaigns:result.instantly?.campaigns??0,instantlyOpportunities:result.instantly?.opportunities??0});
+  await response.json();
+  console.log('Background analytics range refreshed',{client:client.name,range});
  }
  console.log('Background analytics refresh completed');
 }

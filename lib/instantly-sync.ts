@@ -41,14 +41,17 @@ const textBody = (email: Json) => {
 async function interestedLeads(campaignId: string) {
   const filters = ["FILTER_LEAD_INTERESTED", "FILTER_LEAD_MEETING_BOOKED", "FILTER_LEAD_MEETING_COMPLETED", "FILTER_LEAD_CLOSED"];
   const found = new Map<string, Json>();
-  for (const filter of filters) {
+  const groups = await Promise.all(filters.map(async filter => {
+    const rows: Json[] = [];
     let cursor = "";
     do {
       const result = await instantly("/leads/list", { method: "POST", body: JSON.stringify({ campaign: campaignId, filter, limit: 100, ...(cursor ? { starting_after: cursor } : {}) }) }) as { items?: Json[]; next_starting_after?: string };
-      for (const lead of result.items ?? []) if (lead.email) found.set(String(lead.id ?? lead.email), lead);
+      rows.push(...(result.items ?? []));
       cursor = result.next_starting_after ?? "";
     } while (cursor);
-  }
+    return rows;
+  }));
+  for (const lead of groups.flat()) if (lead.email) found.set(String(lead.id ?? lead.email), lead);
   return [...found.values()];
 }
 

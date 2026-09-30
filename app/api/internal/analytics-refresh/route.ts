@@ -1,6 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { syncClientSmartleadOpportunities, syncVenlutoSmartleadCampaigns } from "@/lib/smartlead-sync";
-import { syncInstantly } from "@/lib/instantly-sync";
 
 export const dynamic = "force-dynamic";
 type RangeKey = "7d" | "30d" | "60d" | "90d" | "all";
@@ -23,9 +22,6 @@ export async function POST(request: Request) {
   }
   try {
     const analytics = await syncVenlutoSmartleadCampaigns(true, range, Number(body.clientId)) as Record<string, unknown>;
-    const instantly = process.env.INSTANTLY_API_KEY
-      ? await syncInstantly(range, Number(body.clientId), true)
-      : null;
     let conversationMessagesSynced: number | undefined;
     let conversationSyncWarning: string | undefined;
     // The worker visits every range for every active workspace. Reconcile the
@@ -39,7 +35,7 @@ export async function POST(request: Request) {
         console.error("[Background conversations] refresh failed", { clientId: body.clientId, error });
       }
     }
-    return Response.json({ ...analytics, instantly, conversationMessagesSynced, conversationSyncWarning });
+    return Response.json({ ...analytics, conversationMessagesSynced, conversationSyncWarning });
   } catch (error) {
     console.error("[Background analytics] refresh failed", { clientId: body.clientId, range, error });
     return Response.json({ error: error instanceof Error ? error.message : "Analytics refresh failed" }, { status: 500 });
