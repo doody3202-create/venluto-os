@@ -300,11 +300,23 @@ export default function Dashboard() {
         setData(await r.json()); setLoading(false); }, [clientId]);
     useEffect(() => { if (clientId)
         load(clientId); }, [clientId, load]);
-    useEffect(() => { (async () => { const r = await fetch('/api/clients'); if (!r.ok)
-        return; const result = await r.json() as {
-        clients: ClientWorkspace[];
-        canManage: boolean;
-    }; setClients(result.clients); setCanManage(Boolean(result.canManage)); const remembered = Number(localStorage.getItem('venlutoClientId') ?? 0), chosen = result.clients.find(c => c.id === remembered)?.id ?? result.clients[0]?.id ?? 0; setClientId(chosen); })(); }, []);
+    useEffect(() => {
+        async function loadWorkspaces() {
+            const response = await fetch('/api/clients');
+            if (!response.ok) return;
+            const result = await response.json() as {
+                clients: ClientWorkspace[];
+                canManage: boolean;
+            };
+            // PostgreSQL bigint IDs arrive as strings, but the workspace selector uses numbers.
+            const workspaces = result.clients.map(client => ({ ...client, id: Number(client.id) }));
+            setClients(workspaces);
+            setCanManage(Boolean(result.canManage));
+            const remembered = Number(localStorage.getItem('venlutoClientId'));
+            setClientId(workspaces.find(client => client.id === remembered)?.id ?? workspaces[0]?.id ?? 0);
+        }
+        void loadWorkspaces();
+    }, []);
     const opportunityData = useMemo(() => analytics ? hydrateOpportunitiesFromInbox(data, analytics.inbox) : data, [data, analytics]);
     const isVenluto = canManage && clients.find(c => c.id === clientId)?.name.toLowerCase() === 'venluto';
     const overdue = useMemo(() => opportunityData.prospects.filter(p => p.deadline_at && new Date(p.deadline_at) < new Date() && p.status === 'action_due'), [opportunityData]);
@@ -383,7 +395,7 @@ export default function Dashboard() {
         return; const r = await fetch('/api/clients', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, email, password }) }), result = await r.json(); if (!r.ok) {
         setToast(result.error ?? 'Could not create workspace');
         return;
-    } const next = { ...result.client, companies: 0, contacts: 0, segments: 0 } as ClientWorkspace; setClients(current => [...current, next]); await changeClient(next.id); setNewCredential({ name: `${next.name} · ${result.loginEmail}`, apiKey: result.apiKey }); setTab('lists'); }
+    } const next = { ...result.client, id: Number(result.client.id), companies: 0, contacts: 0, segments: 0 } as ClientWorkspace; setClients(current => [...current, next]); await changeClient(next.id); setNewCredential({ name: `${next.name} · ${result.loginEmail}`, apiKey: result.apiKey }); setTab('lists'); }
     async function signOut() { await fetch('/api/auth/logout', { method: 'POST' }); window.location.assign('/login'); }
     async function rotateClientKey() { const client = clients.find(c => c.id === clientId); if (!client || !window.confirm(`Rotate the Claude TAM API key for ${client.name}? The old key will stop working immediately.`))
         return; const r = await fetch('/api/clients', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId, action: 'rotate_api_key' }) }), result = await r.json(); if (!r.ok) {
